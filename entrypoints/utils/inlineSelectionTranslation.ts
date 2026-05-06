@@ -22,23 +22,34 @@ interface TextFragment {
   end: number;
 }
 
+interface SourceReuseDecision {
+  valid: boolean;
+  sourceId: string | null;
+}
+
+interface SelectedSourceUsage {
+  sourceIds: string[];
+  hasUnmarkedText: boolean;
+}
+
 export function canUseInlineSelection(range: Range | null): boolean {
   if (!range || range.collapsed || !range.toString().trim()) return false;
-  return getInlineSelectionBlockContainer(range) !== null
-    && getIntersectingSourceIds(range).length <= 1;
+
+  const block = getInlineSelectionBlockContainer(range);
+  return block !== null && getSourceReuseDecision(range, block).valid;
 }
 
 export function beginInlineSelectionTranslation(range: Range): InlineSelectionSession | null {
-  if (!canUseInlineSelection(range)) return null;
+  if (range.collapsed || !range.toString().trim()) return null;
 
   const workingRange = range.cloneRange();
   const block = getInlineSelectionBlockContainer(workingRange);
   if (!block) return null;
 
-  const existingSourceIds = getIntersectingSourceIds(workingRange);
-  if (existingSourceIds.length > 1) return null;
+  const reuseDecision = getSourceReuseDecision(workingRange, block);
+  if (!reuseDecision.valid) return null;
 
-  const existingSourceId = existingSourceIds[0] ?? null;
+  const existingSourceId = reuseDecision.sourceId;
   const sourceId = existingSourceId ?? `fr-inline-${Date.now()}-${sourceCounter++}`;
   const sourceElements = existingSourceId
     ? getSourceElements(sourceId)
@@ -165,7 +176,8 @@ function collectTextFragments(range: Range, root: HTMLElement): TextFragment[] {
 }
 
 function getSourceElements(sourceId: string): HTMLElement[] {
-  return Array.from(document.querySelectorAll<HTMLElement>(`[${SOURCE_ATTR}="${sourceId}"]`));
+  return Array.from(document.querySelectorAll<HTMLElement>(`[${SOURCE_ATTR}]`))
+    .filter((node) => node.getAttribute(SOURCE_ATTR) === sourceId);
 }
 
 function getSessionAnchor(session: InlineSelectionSession): HTMLElement | undefined {
@@ -174,11 +186,19 @@ function getSessionAnchor(session: InlineSelectionSession): HTMLElement | undefi
 }
 
 function removeStatus(sourceId: string): void {
-  document.querySelectorAll(`[${STATUS_ATTR}="${sourceId}"]`).forEach((node) => node.remove());
+  document.querySelectorAll(`[${STATUS_ATTR}]`).forEach((node) => {
+    if (node instanceof Element && node.getAttribute(STATUS_ATTR) === sourceId) {
+      node.remove();
+    }
+  });
 }
 
 function removeResult(sourceId: string): void {
-  document.querySelectorAll(`[${RESULT_ATTR}="${sourceId}"]`).forEach((node) => node.remove());
+  document.querySelectorAll(`[${RESULT_ATTR}]`).forEach((node) => {
+    if (node instanceof Element && node.getAttribute(RESULT_ATTR) === sourceId) {
+      node.remove();
+    }
+  });
 }
 
 function getSharedBlockContainer(range: Range): HTMLElement | null {
@@ -235,17 +255,85 @@ function hasMeaningfulSelectedText(range: Range, root: Element): boolean {
   return false;
 }
 
-function getIntersectingSourceIds(range: Range): string[] {
+function getSourceReuseDecision(range: Range, root: HTMLElement): SourceReuseDecision {
+  const usage = getSelectedSourceUsage(range, root);
+
+  if (!usage.sourceIds.length) {
+    return { valid: true, sourceId: null };
+  }
+
+  if (usage.sourceIds.length > 1 || usage.hasUnmarkedText) {
+    return { valid: false, sourceId: null };
+  }
+
+  const sourceId = usage.sourceIds[0];
+  if (!isEntireSourceSelected(range, sourceId)) {
+    return { valid: false, sourceId: null };
+  }
+
+  return { valid: true, sourceId };
+}
+
+function getSelectedSourceUsage(range: Range, root: HTMLElement): SelectedSourceUsage {
   const sourceIds = new Set<string>();
+  let hasUnmarkedText = false;
 
-  document.querySelectorAll<HTMLElement>(`[${SOURCE_ATTR}]`).forEach((source) => {
-    if (!range.intersectsNode(source) || !hasMeaningfulSelectedText(range, source)) return;
-
-    const sourceId = source.getAttribute(SOURCE_ATTR);
-    if (sourceId) sourceIds.add(sourceId);
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      if (!node.textContent?.trim()) return NodeFilter.FILTER_REJECT;
+      return range.intersectsNode(node) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+    },
   });
 
-  return Array.from(sourceIds);
+  let current = walker.nextNode() as Text | null;
+  while (current) {
+    const selectedText = getSelectedTextInTextNode(range, current);
+    if (selectedText.trim()) {
+      const sourceId = getClosestSourceId(current);
+
+      if (sourceId) {
+        sourceIds.add(sourceId);
+      } else {
+        hasUnmarkedText = true;
+      }
+    }
+
+    current = walker.nextNode() as Text | null;
+  }
+
+  return { sourceIds: Array.from(sourceIds), hasUnmarkedText };
+}
+
+function isEntireSourceSelected(range: Range, sourceId: string): boolean {
+  const sourceElements = getSourceElements(sourceId);
+  if (!sourceElements.length) return false;
+
+  return sourceElements.every((source) => {
+    const sourceRange = document.createRange();
+    sourceRange.selectNodeContents(source);
+
+    const startsBeforeOrAtSource = range.compareBoundaryPoints(Range.START_TO_START, sourceRange) <= 0;
+    const endsAfterOrAtSource = range.compareBoundaryPoints(Range.END_TO_END, sourceRange) >= 0;
+
+    sourceRange.detach();
+    return startsBeforeOrAtSource && endsAfterOrAtSource;
+  });
+}
+
+function getClosestSourceId(node: Node): string | null {
+  const element = node.nodeType === Node.TEXT_NODE
+    ? node.parentElement
+    : node instanceof Element
+      ? node
+      : null;
+  const source = element?.closest<HTMLElement>(`[${SOURCE_ATTR}]`);
+  return source?.getAttribute(SOURCE_ATTR) ?? null;
+}
+
+function getSelectedTextInTextNode(range: Range, textNode: Text): string {
+  const start = textNode === range.startContainer ? range.startOffset : 0;
+  const end = textNode === range.endContainer ? range.endOffset : textNode.length;
+  return start < end ? textNode.data.slice(start, end) : '';
 }
 
 function getNearestBlockContainer(node: Node): HTMLElement | null {
