@@ -6,6 +6,8 @@
         class="fr-inline-translate-button"
         :disabled="isInlineTranslating"
         title="翻译选中文本"
+        @mousedown.stop.prevent
+        @mouseup.stop.prevent
         @click.stop.prevent="handleInlineTranslate">
         译
       </button>
@@ -135,6 +137,7 @@ const currentPlayingText = ref(''); // 当前正在播放的文本
 const isFirefox = ref(false); // 是否为Firefox浏览器
 const isDarkTheme = ref(false); // 主题状态
 const isInlineTranslating = ref(false);
+let isUnmounted = false;
 
 const containerRef = useTemplateRef('selection-ref');
 
@@ -327,7 +330,7 @@ const getTranslation = async () => {
 };
 
 const handleInlineTranslate = async () => {
-  if (!selectedText.value || !selectRange.value || isInlineTranslating.value) return;
+  if (isUnmounted || !selectedText.value || !selectRange.value || isInlineTranslating.value) return;
 
   const range = selectRange.value.cloneRange();
   if (!canUseInlineSelection(range)) {
@@ -347,12 +350,18 @@ const handleInlineTranslate = async () => {
 
   try {
     const result = await translateText(selectedText.value);
+    if (isUnmounted) return;
+
     completeInlineSelectionTranslation(session, result);
   } catch (err) {
-    failInlineSelectionTranslation(session);
-    console.error('Inline translation error:', err);
+    if (!isUnmounted) {
+      failInlineSelectionTranslation(session);
+      console.error('Inline translation error:', err);
+    }
   } finally {
-    isInlineTranslating.value = false;
+    if (!isUnmounted) {
+      isInlineTranslating.value = false;
+    }
   }
 };
 
@@ -694,6 +703,8 @@ let systemThemeHandler: () => void;
 
 // 清理事件监听 (修复清理逻辑)
 onBeforeUnmount(() => {
+  isUnmounted = true;
+
   // 正确移除事件监听器
   if (mouseDownHandler) {
     document.removeEventListener('mousedown', mouseDownHandler);
