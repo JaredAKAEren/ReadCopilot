@@ -41,7 +41,7 @@ export class Config {
     customHotkey: string; // 自定义鼠标悬浮快捷键
     disableSelectionTranslator: boolean; // 是否禁用划词翻译
     deeplx: string; // DeepLX 服务地址
-    selectionTranslatorMode: string; // 划词翻译显示模式: 'disabled' | 'bilingual' | 'translation-only'
+    selectionTranslatorMode: string; // 划词翻译显示模式: 'disabled' | 'bilingual' | 'translation-only' | 'inline'
     newApiUrl: string; // NewAPI地址
     maxConcurrentTranslations: number; // 最大并发翻译数量
     youdaoAppKey: string; // 有道翻译 App Key
