@@ -333,7 +333,8 @@ const handleInlineTranslate = async () => {
   if (isUnmounted || !selectedText.value || !selectRange.value || isInlineTranslating.value) return;
 
   const range = selectRange.value.cloneRange();
-  if (!canUseInlineSelection(range)) {
+  const inlineText = range.toString().trim();
+  if (!inlineText || !canUseInlineSelection(range)) {
     hideIndicator();
     return;
   }
@@ -346,10 +347,11 @@ const handleInlineTranslate = async () => {
 
   showIndicator.value = false;
   showTooltip.value = false;
+  selectedText.value = inlineText;
   isInlineTranslating.value = true;
 
   try {
-    const result = await translateText(selectedText.value);
+    const result = await translateText(inlineText);
     if (isUnmounted) return;
 
     completeInlineSelectionTranslation(session, result);
@@ -643,6 +645,8 @@ onMounted(() => {
       lastSelectionChangeTime = now;
       // 延迟处理，确保选择操作完成
       setTimeout(() => {
+        if (isUnmounted) return;
+
         if (!isSelecting.value) {
           handleTextSelection();
         }
