@@ -96,3 +96,9 @@ web-ext.config.ts
 *.sln
 *.sw?
 .continue/
+
+# Agents
+.superpowers/
+.*/skills
+skills
+skills-lock.json
