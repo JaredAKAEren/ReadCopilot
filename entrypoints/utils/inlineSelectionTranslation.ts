@@ -24,15 +24,21 @@ interface TextFragment {
 
 export function canUseInlineSelection(range: Range | null): boolean {
   if (!range || range.collapsed || !range.toString().trim()) return false;
-  return getSharedBlockContainer(range) !== null;
+  return getInlineSelectionBlockContainer(range) !== null
+    && getIntersectingSourceIds(range).length <= 1;
 }
 
 export function beginInlineSelectionTranslation(range: Range): InlineSelectionSession | null {
+  if (!canUseInlineSelection(range)) return null;
+
   const workingRange = range.cloneRange();
-  const block = getSharedBlockContainer(workingRange);
+  const block = getInlineSelectionBlockContainer(workingRange);
   if (!block) return null;
 
-  const existingSourceId = findExistingSourceId(workingRange);
+  const existingSourceIds = getIntersectingSourceIds(workingRange);
+  if (existingSourceIds.length > 1) return null;
+
+  const existingSourceId = existingSourceIds[0] ?? null;
   const sourceId = existingSourceId ?? `fr-inline-${Date.now()}-${sourceCounter++}`;
   const sourceElements = existingSourceId
     ? getSourceElements(sourceId)
@@ -158,25 +164,6 @@ function collectTextFragments(range: Range, root: HTMLElement): TextFragment[] {
   return fragments;
 }
 
-function findExistingSourceId(range: Range): string | null {
-  const startSource = closestSourceElement(range.startContainer);
-  const endSource = closestSourceElement(range.endContainer);
-  const startId = startSource?.getAttribute(SOURCE_ATTR);
-  const endId = endSource?.getAttribute(SOURCE_ATTR);
-
-  return startId && startId === endId ? startId : null;
-}
-
-function closestSourceElement(node: Node): HTMLElement | null {
-  const element = node.nodeType === Node.TEXT_NODE
-    ? node.parentElement
-    : node instanceof Element
-      ? node
-      : null;
-
-  return element?.closest<HTMLElement>(`[${SOURCE_ATTR}]`) ?? null;
-}
-
 function getSourceElements(sourceId: string): HTMLElement[] {
   return Array.from(document.querySelectorAll<HTMLElement>(`[${SOURCE_ATTR}="${sourceId}"]`));
 }
@@ -198,6 +185,67 @@ function getSharedBlockContainer(range: Range): HTMLElement | null {
   const startBlock = getNearestBlockContainer(range.startContainer);
   const endBlock = getNearestBlockContainer(range.endContainer);
   return startBlock && startBlock === endBlock ? startBlock : null;
+}
+
+function getInlineSelectionBlockContainer(range: Range): HTMLElement | null {
+  const sharedBlock = getSharedBlockContainer(range);
+  if (!sharedBlock || hasSelectedDescendantBlock(range, sharedBlock)) return null;
+  return sharedBlock;
+}
+
+function hasSelectedDescendantBlock(range: Range, root: HTMLElement): boolean {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT, {
+    acceptNode(node) {
+      if (!(node instanceof Element) || !isBlockContainer(node)) {
+        return NodeFilter.FILTER_SKIP;
+      }
+
+      if (!range.intersectsNode(node)) {
+        return NodeFilter.FILTER_SKIP;
+      }
+
+      return hasMeaningfulSelectedText(range, node)
+        ? NodeFilter.FILTER_ACCEPT
+        : NodeFilter.FILTER_SKIP;
+    },
+  });
+
+  return walker.nextNode() !== null;
+}
+
+function hasMeaningfulSelectedText(range: Range, root: Element): boolean {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      return range.intersectsNode(node) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+    },
+  });
+
+  let current = walker.nextNode() as Text | null;
+  while (current) {
+    const start = current === range.startContainer ? range.startOffset : 0;
+    const end = current === range.endContainer ? range.endOffset : current.length;
+
+    if (start < end && current.data.slice(start, end).trim()) {
+      return true;
+    }
+
+    current = walker.nextNode() as Text | null;
+  }
+
+  return false;
+}
+
+function getIntersectingSourceIds(range: Range): string[] {
+  const sourceIds = new Set<string>();
+
+  document.querySelectorAll<HTMLElement>(`[${SOURCE_ATTR}]`).forEach((source) => {
+    if (!range.intersectsNode(source) || !hasMeaningfulSelectedText(range, source)) return;
+
+    const sourceId = source.getAttribute(SOURCE_ATTR);
+    if (sourceId) sourceIds.add(sourceId);
+  });
+
+  return Array.from(sourceIds);
 }
 
 function getNearestBlockContainer(node: Node): HTMLElement | null {
