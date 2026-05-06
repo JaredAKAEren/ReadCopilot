@@ -1,11 +1,20 @@
 <template>
   <teleport to="body">
     <div ref="selection-ref" class="fr-selection-translator-wrapper">
-      <!-- 小红点指示器 -->
-      <div v-if="showIndicator" 
-          class="fr-selection-indicator" 
-          @mouseenter="handleMouseEnter"
-          @mouseleave="handleMouseLeave">
+      <button
+        v-if="showIndicator && config.selectionTranslatorMode === 'inline'"
+        class="fr-inline-translate-button"
+        :disabled="isInlineTranslating"
+        title="翻译选中文本"
+        @click.stop.prevent="handleInlineTranslate">
+        译
+      </button>
+
+      <div
+        v-else-if="showIndicator"
+        class="fr-selection-indicator"
+        @mouseenter="handleMouseEnter"
+        @mouseleave="handleMouseLeave">
       </div>
     
       <!-- 翻译结果弹窗 -->
@@ -96,6 +105,14 @@
 import { ref, onMounted, onBeforeUnmount, watch, useTemplateRef, watchEffect } from 'vue';
 import { translateText } from '@/entrypoints/utils/translateApi';
 import { config } from '@/entrypoints/utils/config';
+import {
+  beginInlineSelectionTranslation,
+  canUseInlineSelection,
+  cleanupInlineSelectionTranslations,
+  completeInlineSelectionTranslation,
+  failInlineSelectionTranslation,
+  type InlineSelectionSession,
+} from '@/entrypoints/utils/inlineSelectionTranslation';
 import { autoPlacement, autoUpdate, computePosition, flip, hide, inline, offset, shift } from '@floating-ui/dom';
 
 // 状态变量
@@ -117,6 +134,7 @@ const debounceTimer = ref<number | null>(null); // 防抖定时器
 const currentPlayingText = ref(''); // 当前正在播放的文本
 const isFirefox = ref(false); // 是否为Firefox浏览器
 const isDarkTheme = ref(false); // 主题状态
+const isInlineTranslating = ref(false);
 
 const containerRef = useTemplateRef('selection-ref');
 
@@ -189,6 +207,11 @@ const handleTextSelection = () => {
     if (selectedTextContent === lastSelectedText.value) {
       // 重新显示指示器，但不重新获取翻译
       const range = selection.getRangeAt(0);
+      if (config.selectionTranslatorMode === 'inline' && !canUseInlineSelection(range)) {
+        hideIndicator();
+        return;
+      }
+
       selectRange.value = range;
       showIndicator.value = true;
       return;
@@ -209,6 +232,10 @@ const handleTextSelection = () => {
     
     // 获取选中文本位置信息
     const range = selection.getRangeAt(0);
+    if (config.selectionTranslatorMode === 'inline' && !canUseInlineSelection(range)) {
+      hideIndicator();
+      return;
+    }
     
     // 保存选中文本和位置
     selectedText.value = selectedTextContent;
@@ -296,6 +323,36 @@ const getTranslation = async () => {
     console.error('Translation error:', err);
   } finally {
     isLoading.value = false;
+  }
+};
+
+const handleInlineTranslate = async () => {
+  if (!selectedText.value || !selectRange.value || isInlineTranslating.value) return;
+
+  const range = selectRange.value.cloneRange();
+  if (!canUseInlineSelection(range)) {
+    hideIndicator();
+    return;
+  }
+
+  const session: InlineSelectionSession | null = beginInlineSelectionTranslation(range);
+  if (!session) {
+    hideIndicator();
+    return;
+  }
+
+  showIndicator.value = false;
+  showTooltip.value = false;
+  isInlineTranslating.value = true;
+
+  try {
+    const result = await translateText(selectedText.value);
+    completeInlineSelectionTranslation(session, result);
+  } catch (err) {
+    failInlineSelectionTranslation(session);
+    console.error('Inline translation error:', err);
+  } finally {
+    isInlineTranslating.value = false;
   }
 };
 
@@ -594,7 +651,7 @@ onMounted(() => {
   
   // 监听翻译显示状态的变化
   watch(showTooltip, async (newValue: boolean) => {
-    if (newValue) {
+    if (newValue && config.selectionTranslatorMode !== 'inline') {
       // 当显示弹窗时，加载翻译结果
       await getTranslation();
     } else if (isPlaying.value) {
@@ -607,7 +664,7 @@ onMounted(() => {
   clickHandler = (e: Event) => {
     // 检查点击事件是否发生在指示器或弹窗之外
     const target = e.target as HTMLElement;
-    const isOutsideIndicator = !target.closest('.fr-selection-indicator');
+    const isOutsideIndicator = !target.closest('.fr-selection-indicator') && !target.closest('.fr-inline-translate-button');
     const isOutsideTooltip = !target.closest('.fr-translation-tooltip');
     
     // 检查点击事件是否发生在音频按钮上
@@ -663,6 +720,8 @@ onBeforeUnmount(() => {
     clearTimeout(debounceTimer.value);
     debounceTimer.value = null;
   }
+
+  cleanupInlineSelectionTranslations();
   
   // 停止所有音频播放
   if (audioElement.value) {
@@ -698,7 +757,36 @@ onBeforeUnmount(() => {
   animation: pulse 1.5s infinite;
 }
 
+.fr-inline-translate-button {
+  position: absolute;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 14px;
+  background: #1677ff;
+  color: #fff;
+  font-size: 14px;
+  line-height: 28px;
+  cursor: pointer;
+  z-index: 9999;
+  box-shadow: 0 4px 12px rgba(22, 119, 255, 0.28);
+}
+
+.fr-inline-translate-button:hover {
+  background: #0958d9;
+}
+
+.fr-inline-translate-button:disabled {
+  cursor: default;
+  opacity: 0.65;
+}
+
 [data-placement="left"] .fr-selection-indicator {
+  bottom: 0;
+  right: 4px;
+}
+[data-placement="left"] .fr-inline-translate-button {
   bottom: 0;
   right: 4px;
 }
@@ -706,7 +794,15 @@ onBeforeUnmount(() => {
   bottom: 0;
   left: 4px;
 }
+[data-placement="right"] .fr-inline-translate-button {
+  bottom: 0;
+  left: 4px;
+}
 [data-placement="top-start"] .fr-selection-indicator {
+  left: 0;
+  bottom: 4px;
+}
+[data-placement="top-start"] .fr-inline-translate-button {
   left: 0;
   bottom: 4px;
 }
@@ -714,11 +810,23 @@ onBeforeUnmount(() => {
   right: 0;
   bottom: 4px;
 }
+[data-placement="top-end"] .fr-inline-translate-button {
+  right: 0;
+  bottom: 4px;
+}
 [data-placement="bottom-start"] .fr-selection-indicator {
   left: 0;
   top: 4px;
 }
+[data-placement="bottom-start"] .fr-inline-translate-button {
+  left: 0;
+  top: 4px;
+}
 [data-placement="bottom-end"] .fr-selection-indicator {
+  right: 0;
+  top: 4px;
+}
+[data-placement="bottom-end"] .fr-inline-translate-button {
   right: 0;
   top: 4px;
 }
