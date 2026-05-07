@@ -87,6 +87,7 @@ web-ext.config.ts
 
 # Editor directories and files
 .vscode/*
+.vscode
 !.vscode/extensions.json
 .idea
 .DS_Store
@@ -102,3 +103,5 @@ web-ext.config.ts
 .*/skills
 skills
 skills-lock.json
+.agents
+.claude
