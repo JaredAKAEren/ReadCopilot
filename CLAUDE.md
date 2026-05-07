@@ -65,7 +65,7 @@ CSS 约定：翻译内容使用 `fluent-read-bilingual`、`fluent-read-bilingual
 ## 编码与协作约定
 
 - Vue / TS / CSS / JSON 一律两个空格缩进；新代码使用 Vue 3 Composition API。
-- 提交信息使用 Conventional Commits 风格（`feat:` / `fix:` / `build:` / `chore:` / `docs:`），主语简洁、祈使句。
+- 提交信息使用 Conventional Commits 风格（`feat:` / `fix:` / `build:` / `chore:` / `docs:`），**用中文编写**，主语简洁、祈使句。不在 commit message 中加入 `Co-Authored-By` 标签。
 - 翻译服务实现中不要打印请求体，避免泄露用户页面文本或选区。
 - 不要把 API key、厂商 token 或本地浏览器配置提交进仓库；密钥放在扩展存储里。
 
