@@ -100,10 +100,23 @@ export function looksLikeWord(raw: string, targetLang: string): boolean {
   return true;
 }
 
+// 句末标点扫描；600 字符兜底
 export function extractSentence(range: Range, block: HTMLElement): string {
-  // block.textContent 作字符串轨道，定位 range 起止字符 offset。
-  // 向左/向右各扫到最近的 [.!?。！？\n] 或 block 边界，截取 trim 后返回。
-  // 长度兜底：> 600 字符截断到 600。
+  const fullText = block.textContent ?? '';
+  if (!fullText) return '';
+
+  // 用 TreeWalker 累计字符 offset，定位 range.startContainer/startOffset 与 range.endContainer/endOffset 在 fullText 中的位置
+  const { startIdx, endIdx } = computeRangeOffsetsInText(range, block);
+  const SENT_END = /[.!?。！？\n]/;
+
+  let left = startIdx;
+  while (left > 0 && !SENT_END.test(fullText[left - 1])) left--;
+  let right = endIdx;
+  while (right < fullText.length && !SENT_END.test(fullText[right])) right++;
+
+  let sentence = fullText.slice(left, Math.min(right + 1, fullText.length)).trim();
+  if (sentence.length > 600) sentence = sentence.slice(0, 600);
+  return sentence;
 }
 ```
 
@@ -151,10 +164,15 @@ export interface InlineSelectionSession {
 
 #### 消息契约
 
-`runtime.sendMessage` body 扩展：
+`runtime.sendMessage` body 扩展，定义统一的 `TranslateMessage` 类型（放在 `entrypoints/utils/translateApi.ts` 或 `entrypoints/utils/messageTypes.ts`）：
 
 ```ts
-{ context, origin, mode?: 'word' | 'sentence', sentence?: string }
+export interface TranslateMessage {
+  context: string;
+  origin: string;
+  mode?: 'word' | 'sentence';
+  sentence?: string;
+}
 ```
 
 `background.ts` 的 `runtime.onMessage` 透传 `mode` / `sentence` 到 `_service[config.service](message)`，不做新分支。
@@ -184,11 +202,26 @@ export async function translateText(
 ```ts
 export function commonMsgTemplate(message: TranslateMessage) {
   if (message.mode === 'word') return wordPromptTemplate(message);
-  return sentencePromptTemplate(message);  // 现状代码原样
+  return sentencePromptTemplate(message);  // 现状代码原样移过来
 }
 ```
 
-调用点（`common.ts:25` 等）顺带改一下。
+需要同步更新的 service caller（10 处，把 `xxxMsgTemplate(message.origin)` 改成 `xxxMsgTemplate(message)`）：
+
+- `entrypoints/service/common.ts`（commonMsgTemplate）
+- `entrypoints/service/claude.ts`（claudeMsgTemplate）
+- `entrypoints/service/gemini.ts`（geminiMsgTemplate）
+- `entrypoints/service/deepseek.ts`（deepseekMsgTemplate）
+- `entrypoints/service/azure-openai.ts`（commonMsgTemplate）
+- `entrypoints/service/custom.ts`（commonMsgTemplate）
+- `entrypoints/service/grok.ts`（commonMsgTemplate）
+- `entrypoints/service/infini.ts`（commonMsgTemplate）
+- `entrypoints/service/newapi.ts`（commonMsgTemplate + deepseekMsgTemplate）
+- `entrypoints/service/zhipu.ts`（commonMsgTemplate）
+
+#### 已知限制：未改造的 LLM 模板
+
+`tongyiMsgTemplate` / `yiyanMsgTemplate` / `minimaxTemplate` / `cozeTemplate` 不在本次改造范围（请求结构特殊：通义 `qwen-mt` 走翻译专用 API，文心走 ERNIE 路径，coze 是 bot 接口）。这些服务被 `servicesType.AI` 包含，inline 模式会启用，但 word 选区会走它们各自的 sentence prompt → 返回普通中文译文 → `parseWordResponse` 失败 → **软降级**到纯文本译文，不出 icon。用户体验降级为"inline 模式但单词没词典"，跟非 LLM 服务的行为一致；不报错、不阻断。如后续有用户反馈，再单独迭代支持。
 
 #### Word prompt（英文 system，不强制 response_format）
 
@@ -302,6 +335,16 @@ if (useCache) cache.localSet(key, result);
 return result;
 ```
 
+`isValidWordPayload` 守卫：
+
+```ts
+function isValidWordPayload(v: unknown): v is WordPayload {
+  return typeof v === 'object' && v !== null
+    && typeof (v as WordPayload).translation === 'string'
+    && (v as WordPayload).translation.trim() !== '';
+}
+```
+
 不引入新失效机制。
 
 ### 6. UI 实现
@@ -342,7 +385,49 @@ icon SVG（11×11 书形）样式（写入 `style.css`）：
 .fr-inline-selection-result.is-empty { margin-left: 4px; }
 ```
 
-icon 的 hover 监听由 `inlineSelectionTranslation.ts` 直接挂在 SVG 上：mouseenter 200ms 后挂载 popover 组件，mouseleave 150ms 后卸载（鼠标移到 popover 上时取消卸载）。
+icon 的 hover 监听由 `inlineSelectionTranslation.ts` 直接挂在 SVG 上：
+
+- `mouseenter`：清掉关闭 timer；起一个 200ms 的 show timer。timer 触发时调 `mountWordPopover(iconEl, payload, sourceElements)`。
+- `mouseleave`：清掉 show timer；起一个 150ms 的 hide timer。
+- 当 mouseenter 命中 popover 容器本身（参考 SelectionTranslator 的 `handleMouseEnterTooltip` 模式）时，清掉 hide timer，避免穿越缝隙时闪烁。
+
+`mountWordPopover` 复用现有 `entrypoints/utils/selectionTranslator.ts` / `floatingBall.ts` 的命令式挂载范式：
+
+```ts
+// inlineSelectionTranslation.ts
+import { createApp, type App } from 'vue';
+import WordExplainPopover from '@/components/WordExplainPopover.vue';
+
+let activePopover: { app: App; container: HTMLElement; sourceElements: HTMLElement[] } | null = null;
+
+function mountWordPopover(icon: HTMLElement, payload: WordPayload, sourceElements: HTMLElement[]) {
+  unmountWordPopover();   // 先关掉上一个
+  const container = document.createElement('div');
+  container.className = 'fr-word-popover-host';
+  document.body.appendChild(container);
+
+  const app = createApp(WordExplainPopover, {
+    word: sourceElements.map(el => el.textContent ?? '').join(''),
+    payload,
+    referenceEl: icon,        // floating-ui 的定位锚
+    onClose: unmountWordPopover,
+  });
+  app.mount(container);
+
+  sourceElements.forEach(el => el.classList.add('fr-source-active'));
+  activePopover = { app, container, sourceElements };
+}
+
+function unmountWordPopover() {
+  if (!activePopover) return;
+  activePopover.sourceElements.forEach(el => el.classList.remove('fr-source-active'));
+  activePopover.app.unmount();
+  activePopover.container.remove();
+  activePopover = null;
+}
+```
+
+`cleanupInlineSelectionTranslations` 调用 `unmountWordPopover` 兜底。
 
 #### 6.2 `WordExplainPopover.vue`（新建）
 
