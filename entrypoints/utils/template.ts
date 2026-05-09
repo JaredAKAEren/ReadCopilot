@@ -1,9 +1,10 @@
 // 消息模板工具
 import {customModelString, defaultOption, services} from "./option";
 import {config} from "@/entrypoints/utils/config";
+import { TranslateMessage } from "./messageTypes";
 
 // openai 格式的消息模板（通用模板）
-export function commonMsgTemplate(origin: string) {
+export function commonMsgTemplate(message: TranslateMessage) {
     // 检测是否使用自定义模型
     let model = config.model[config.service] === customModelString ? config.customModel[config.service] : config.model[config.service]
 
@@ -12,7 +13,7 @@ export function commonMsgTemplate(origin: string) {
 
     let system = config.system_role[config.service] || defaultOption.system_role;
     let user = (config.user_role[config.service] || defaultOption.user_role)
-        .replace('{{to}}', config.to).replace('{{origin}}', origin);
+        .replace('{{to}}', config.to).replace('{{origin}}', message.origin);
 
     return JSON.stringify({
         'model': model,
@@ -25,7 +26,7 @@ export function commonMsgTemplate(origin: string) {
 }
 
 // deepseek
-export function deepseekMsgTemplate(origin: string) {
+export function deepseekMsgTemplate(message: TranslateMessage) {
     // 检测是否使用自定义模型
     let model = config.model[config.service] === customModelString ? config.customModel[config.service] : config.model[config.service]
 
@@ -34,7 +35,7 @@ export function deepseekMsgTemplate(origin: string) {
 
     let system = config.system_role[config.service] || defaultOption.system_role;
     let user = (config.user_role[config.service] || defaultOption.user_role)
-        .replace('{{to}}', config.to).replace('{{origin}}', origin);
+        .replace('{{to}}', config.to).replace('{{origin}}', message.origin);
 
     const payload: any = {
         'model': model,
@@ -53,9 +54,9 @@ export function deepseekMsgTemplate(origin: string) {
 }
 
 // gemini
-export function geminiMsgTemplate(origin: string) {
+export function geminiMsgTemplate(message: TranslateMessage) {
     let user = (config.user_role[config.service] || defaultOption.user_role)
-        .replace('{{to}}', config.to).replace('{{origin}}', origin);
+        .replace('{{to}}', config.to).replace('{{origin}}', message.origin);
 
     return JSON.stringify({
         "contents": [
@@ -65,7 +66,7 @@ export function geminiMsgTemplate(origin: string) {
 }
 
 // claude
-export function claudeMsgTemplate(origin: string) {
+export function claudeMsgTemplate(message: TranslateMessage) {
     let model = config.model[services.claude];
     if (model === "claude-3-5-haiku") model = "claude-3-5-haiku-20241022";
     else if (model === "claude-3-5-sonnet") model = "claude-3-5-sonnet-20241022";
@@ -73,7 +74,7 @@ export function claudeMsgTemplate(origin: string) {
 
     let system = config.system_role[config.service] || defaultOption.system_role;
     let user = (config.user_role[config.service] || defaultOption.user_role)
-        .replace('{{to}}', config.to).replace('{{origin}}', origin);
+        .replace('{{to}}', config.to).replace('{{origin}}', message.origin);
 
     return JSON.stringify({
         model: model,

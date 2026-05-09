@@ -16,7 +16,7 @@ async function infini(message: any) {
     const resp = await fetch(`https://cloud.infini-ai.com/maas/${model}/nvidia/chat/completions`, {
         method: method.POST,
         headers: headers,
-        body: commonMsgTemplate(message.origin)
+        body: commonMsgTemplate(message)
     });
 
     if (resp.ok) {
