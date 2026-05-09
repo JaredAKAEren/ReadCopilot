@@ -1,3 +1,5 @@
+import { createApp, type App } from 'vue';
+import WordExplainPopover from '@/components/WordExplainPopover.vue';
 import { looksLikeWord, extractSentence } from './wordHeuristic';
 import type { WordPayload } from './wordPrompt';
 import { config } from './config';
@@ -13,6 +15,20 @@ const SOURCE_ATTR = 'data-fr-inline-selection-source';
 const STATUS_ATTR = 'data-fr-inline-selection-status';
 const RESULT_ATTR = 'data-fr-inline-selection-result';
 const TIER_ATTR = 'data-fr-inline-selection-tier';
+
+const HOVER_SHOW_DELAY = 200;
+const HOVER_HIDE_DELAY = 150;
+
+interface ActivePopover {
+  app: App;
+  container: HTMLElement;
+  sourceElements: HTMLElement[];
+  iconEl: HTMLElement;
+}
+
+let activePopover: ActivePopover | null = null;
+let showTimer: number | null = null;
+let hideTimer: number | null = null;
 
 let sourceCounter = 0;
 
@@ -240,21 +256,95 @@ export function cleanupInlineSelectionTranslations(): void {
   });
 }
 
-// ─── Placeholders (Task 9-10 will implement) ──────────────────────────────────
+// ─── Icon element ─────────────────────────────────────────────────────────────
 
 function createIconElement(): HTMLElement {
   const span = document.createElement('span');
   span.className = 'fr-inline-selection-icon';
-  // Task 10 step 5 填入 SVG 内容；此处先空壳。
+  // 11×11 书形 SVG，stroke 跟随 currentColor
+  span.innerHTML = `<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>`;
   return span;
 }
 
-function attachIconHover(_icon: HTMLElement, _session: InlineSelectionSession, _payload: WordPayload): void {
-  // Task 10 step 4 实现 hover → mountWordPopover；此处占位。
+// ─── Popover mount / unmount ──────────────────────────────────────────────────
+
+function mountWordPopover(icon: HTMLElement, session: InlineSelectionSession, payload: WordPayload): void {
+  unmountWordPopover();
+
+  const container = document.createElement('div');
+  container.className = 'fr-word-popover-host';
+  document.body.appendChild(container);
+
+  const word = session.sourceElements.map((el) => el.textContent ?? '').join('');
+
+  const app = createApp(WordExplainPopover, {
+    word,
+    payload,
+    referenceEl: icon,
+    onHoverEnter: () => {
+      if (hideTimer !== null) {
+        clearTimeout(hideTimer);
+        hideTimer = null;
+      }
+    },
+    onHoverLeave: () => {
+      scheduleHidePopover();
+    },
+  } as any);
+  app.mount(container);
+
+  for (const el of session.sourceElements) el.classList.add('fr-source-active');
+
+  activePopover = { app, container, sourceElements: session.sourceElements, iconEl: icon };
 }
 
 function unmountWordPopover(): void {
-  // Task 10 实现。
+  if (showTimer !== null) {
+    clearTimeout(showTimer);
+    showTimer = null;
+  }
+  if (hideTimer !== null) {
+    clearTimeout(hideTimer);
+    hideTimer = null;
+  }
+  if (!activePopover) return;
+  for (const el of activePopover.sourceElements) el.classList.remove('fr-source-active');
+  activePopover.app.unmount();
+  activePopover.container.remove();
+  activePopover = null;
+}
+
+function scheduleHidePopover(): void {
+  if (hideTimer !== null) clearTimeout(hideTimer);
+  hideTimer = window.setTimeout(() => {
+    unmountWordPopover();
+  }, HOVER_HIDE_DELAY);
+}
+
+// ─── Icon hover wiring ────────────────────────────────────────────────────────
+
+function attachIconHover(icon: HTMLElement, session: InlineSelectionSession, payload: WordPayload): void {
+  icon.addEventListener('mouseenter', () => {
+    if (hideTimer !== null) {
+      clearTimeout(hideTimer);
+      hideTimer = null;
+    }
+    if (activePopover && activePopover.iconEl === icon) return; // 已经显示这个 icon 的 popover
+
+    if (showTimer !== null) clearTimeout(showTimer);
+    showTimer = window.setTimeout(() => {
+      mountWordPopover(icon, session, payload);
+      showTimer = null;
+    }, HOVER_SHOW_DELAY);
+  });
+
+  icon.addEventListener('mouseleave', () => {
+    if (showTimer !== null) {
+      clearTimeout(showTimer);
+      showTimer = null;
+    }
+    scheduleHidePopover();
+  });
 }
 
 // ─── Internal helpers ─────────────────────────────────────────────────────────
