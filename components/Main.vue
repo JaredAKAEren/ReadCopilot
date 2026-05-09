@@ -170,7 +170,7 @@
     <!-- 划词翻译模式选择 -->
     <el-row v-if="config.on" class="margin-bottom margin-left-2em margin-top-1em">
       <el-col :span="14" class="lightblue rounded-corner">
-        <el-tooltip class="box-item" effect="dark" content="选中文本后触发划词翻译。可选择关闭、双语弹窗、仅译文弹窗或内联翻译" placement="top-start" :show-after="500">
+        <el-tooltip class="box-item" effect="dark" content="选中文本后触发划词翻译。可选择关闭、双语弹窗、仅译文弹窗或内联翻译。内联翻译需要 LLM 服务（OpenAI / Claude / Gemini / DeepSeek 等）才能启用词典浮窗" placement="top-start" :show-after="500">
           <span class="popup-text popup-vertical-left">
             划词翻译
             <el-icon class="icon-margin">
@@ -184,7 +184,10 @@
           <el-option label="关闭" value="disabled" />
           <el-option label="双语显示" value="bilingual" />
           <el-option label="只显示译文" value="translation-only" />
-          <el-option label="内联翻译" value="inline" />
+          <el-option
+            label="内联翻译"
+            value="inline"
+            :disabled="!servicesType.isAI(config.service)" />
         </el-select>
       </el-col>
     </el-row>
@@ -847,6 +850,14 @@ watch(() => config.value.selectionTranslatorMode, (newMode) => {
       }
     });
   });
+});
+
+// 监听服务切换，内联翻译不支持非 LLM 服务时自动回退
+watch(() => config.value.service, (newService) => {
+  if (config.value.selectionTranslatorMode === 'inline' && !servicesType.isAI(newService)) {
+    config.value.selectionTranslatorMode = 'bilingual';
+    ElMessage.info('当前服务不支持内联翻译，已自动切换为双语弹窗');
+  }
 });
 
 // 监听开关变化
