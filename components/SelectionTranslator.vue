@@ -351,14 +351,27 @@ const handleInlineTranslate = async () => {
   isInlineTranslating.value = true;
 
   try {
-    const result = await translateText(inlineText);
-    if (isUnmounted) return;
-
-    completeInlineSelectionTranslation(session, result);
+    if (session.mode === 'word') {
+      const result = await translateText(inlineText, undefined, {
+        mode: 'word',
+        sentence: session.sentence,
+      });
+      if (isUnmounted) return;
+      if (typeof result === 'string') {
+        // 软降级：纯文本译文，无词典数据
+        completeInlineSelectionTranslation(session, result);
+      } else {
+        completeInlineSelectionTranslation(session, result.translation, result);
+      }
+    } else {
+      const result = await translateText(inlineText);
+      if (isUnmounted) return;
+      completeInlineSelectionTranslation(session, result);
+    }
   } catch (err) {
     if (!isUnmounted) {
       failInlineSelectionTranslation(session);
-      console.error('Inline translation error:', err);
+      console.error('Inline translation error:', (err as Error).message);
     }
   } finally {
     if (!isUnmounted) {
