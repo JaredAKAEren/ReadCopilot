@@ -54,6 +54,7 @@ const popoverRef = useTemplateRef<HTMLElement>('popoverRef');
 const isDarkTheme = ref(false);
 
 let cleanupAutoUpdate: (() => void) | null = null;
+let stopThemeWatch: (() => void) | null = null;
 
 function updateTheme() {
   const t = config.theme || 'auto';
@@ -66,7 +67,7 @@ function updateTheme() {
 
 onMounted(() => {
   updateTheme();
-  watch(() => config.theme, updateTheme);
+  stopThemeWatch = watch(() => config.theme, updateTheme);
 
   const popover = popoverRef.value;
   if (!popover) return;
@@ -86,6 +87,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  stopThemeWatch?.();
   cleanupAutoUpdate?.();
 });
 </script>
@@ -200,4 +202,8 @@ onBeforeUnmount(() => {
 .fr-word-popover.fr-dark-theme .fr-word-popover-context-text { color: #ffffff; }
 .fr-word-popover.fr-dark-theme .fr-word-popover-meaning { color: #ffffff; }
 .fr-word-popover.fr-dark-theme .fr-word-popover-pronunciation { color: #aaa; }
+.fr-word-popover.fr-dark-theme .fr-word-popover-defs-label { color: #d1d5db; }
+.fr-word-popover.fr-dark-theme .fr-word-popover-pos { color: #d1d5db; }
+.fr-word-popover.fr-dark-theme .fr-word-popover-context-label { color: #69c0ff; }
+.fr-word-popover.fr-dark-theme .fr-word-popover-ipa { color: #69c0ff; }
 </style>
