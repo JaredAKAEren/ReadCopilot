@@ -3,6 +3,7 @@ import {customModelString, services} from "../utils/option";
 import {method} from "../utils/constant";
 import {commonMsgTemplate} from "@/entrypoints/utils/template";
 import {config} from "@/entrypoints/utils/config";
+import { interpretLLMContent } from "@/entrypoints/utils/wordPrompt";
 
 async function infini(message: any) {
     // 构建请求头
@@ -21,7 +22,7 @@ async function infini(message: any) {
 
     if (resp.ok) {
         let result = await resp.json();
-        return result.choices[0].message.content
+        return interpretLLMContent(result.choices[0].message.content, message.mode)
     } else {
         console.error(resp);
         throw new Error(`请求失败: ${resp.status} ${resp.statusText} body: ${await resp.text()}`);

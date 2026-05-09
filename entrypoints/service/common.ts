@@ -1,7 +1,7 @@
 import {method, urls} from "../utils/constant";
 import {commonMsgTemplate} from "../utils/template";
 import {config} from "@/entrypoints/utils/config";
-import {contentPostHandler} from "@/entrypoints/utils/check";
+import { interpretLLMContent } from "@/entrypoints/utils/wordPrompt";
 import { services } from "../utils/option";
 
 async function common(message: any) {
@@ -30,7 +30,7 @@ async function common(message: any) {
         }
 
         const result = await resp.json();
-        return contentPostHandler(result.choices[0].message.content);
+        return interpretLLMContent(result.choices[0].message.content, message.mode);
     } catch (error) {
         console.error('API调用失败:', error);
         throw error;

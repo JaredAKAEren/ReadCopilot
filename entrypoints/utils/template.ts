@@ -2,14 +2,23 @@
 import {customModelString, defaultOption, services} from "./option";
 import {config} from "@/entrypoints/utils/config";
 import { TranslateMessage } from "./messageTypes";
+import { WORD_SYSTEM_PROMPT, buildWordUserPrompt } from "./wordPrompt";
 
 // openai 格式的消息模板（通用模板）
 export function commonMsgTemplate(message: TranslateMessage) {
-    // 检测是否使用自定义模型
     let model = config.model[config.service] === customModelString ? config.customModel[config.service] : config.model[config.service]
-
-    // 删除模型名称中的中文括号及其内容，如"gpt-4（推荐）" -> "gpt-4"
     model = model.replace(/（.*）/g, "");
+
+    if (message.mode === 'word') {
+        return JSON.stringify({
+            'model': model,
+            'temperature': 0.3,
+            'messages': [
+                {'role': 'system', 'content': WORD_SYSTEM_PROMPT},
+                {'role': 'user', 'content': buildWordUserPrompt(message.origin, message.sentence ?? '')},
+            ]
+        })
+    }
 
     let system = config.system_role[config.service] || defaultOption.system_role;
     let user = (config.user_role[config.service] || defaultOption.user_role)
@@ -27,11 +36,20 @@ export function commonMsgTemplate(message: TranslateMessage) {
 
 // deepseek
 export function deepseekMsgTemplate(message: TranslateMessage) {
-    // 检测是否使用自定义模型
     let model = config.model[config.service] === customModelString ? config.customModel[config.service] : config.model[config.service]
-
-    // 删除模型名称中的中文括号及其内容，如"gpt-4（推荐）" -> "gpt-4"
     model = model.replace(/（.*）/g, "");
+
+    if (message.mode === 'word') {
+        const payload: any = {
+            'model': model,
+            'messages': [
+                {'role': 'system', 'content': WORD_SYSTEM_PROMPT},
+                {'role': 'user', 'content': buildWordUserPrompt(message.origin, message.sentence ?? '')},
+            ]
+        };
+        if (model !== 'deepseek-reasoner') payload.temperature = 0.3;
+        return JSON.stringify(payload);
+    }
 
     let system = config.system_role[config.service] || defaultOption.system_role;
     let user = (config.user_role[config.service] || defaultOption.user_role)
@@ -45,7 +63,6 @@ export function deepseekMsgTemplate(message: TranslateMessage) {
         ]
     };
 
-    // 如果不是 deepseek-reasoner 模型,则添加 temperature
     if (model !== 'deepseek-reasoner') {
         payload.temperature = 0.7;
     }
@@ -55,6 +72,19 @@ export function deepseekMsgTemplate(message: TranslateMessage) {
 
 // gemini
 export function geminiMsgTemplate(message: TranslateMessage) {
+    if (message.mode === 'word') {
+        const userPrompt = `${WORD_SYSTEM_PROMPT}\n\n${buildWordUserPrompt(message.origin, message.sentence ?? '')}`;
+        return JSON.stringify({
+            "contents": [
+                {"role": "user", "parts": [{"text": userPrompt}]},
+            ],
+            "generationConfig": {
+                "responseMimeType": "application/json",
+                "temperature": 0.3,
+            }
+        })
+    }
+
     let user = (config.user_role[config.service] || defaultOption.user_role)
         .replace('{{to}}', config.to).replace('{{origin}}', message.origin);
 
@@ -71,6 +101,19 @@ export function claudeMsgTemplate(message: TranslateMessage) {
     if (model === "claude-3-5-haiku") model = "claude-3-5-haiku-20241022";
     else if (model === "claude-3-5-sonnet") model = "claude-3-5-sonnet-20241022";
     else if (model === "claude-3-opus") model = "claude-3-opus-20240229";
+
+    if (message.mode === 'word') {
+        return JSON.stringify({
+            model: model,
+            max_tokens: 4096,
+            stream: false,
+            temperature: 0.3,
+            system: WORD_SYSTEM_PROMPT,
+            messages: [
+                {role: "user", content: `${buildWordUserPrompt(message.origin, message.sentence ?? '')}\n\nRespond with JSON only.`},
+            ]
+        })
+    }
 
     let system = config.system_role[config.service] || defaultOption.system_role;
     let user = (config.user_role[config.service] || defaultOption.user_role)

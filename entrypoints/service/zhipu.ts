@@ -3,6 +3,7 @@ import {services} from "../utils/option";
 import {commonMsgTemplate} from "../utils/template";
 import CryptoJS from 'crypto-js';
 import {config} from "@/entrypoints/utils/config";
+import { interpretLLMContent } from "@/entrypoints/utils/wordPrompt";
 
 
 // 文档参考：https://open.bigmodel.cn/dev/api#nosdk
@@ -33,7 +34,7 @@ async function zhipu(message: any) {
 
     if (resp.ok) {
         let result = await resp.json();
-        return result.choices[0].message.content;
+        return interpretLLMContent(result.choices[0].message.content, message.mode);
     } else {
         console.log(resp)
         throw new Error(`翻译失败: ${resp.status} ${resp.statusText} body: ${await resp.text()}`);

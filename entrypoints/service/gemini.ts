@@ -2,6 +2,7 @@ import {method} from "../utils/constant";
 import {geminiMsgTemplate} from "../utils/template";
 import {customModelString} from "../utils/option";
 import {config} from "@/entrypoints/utils/config";
+import { interpretLLMContent } from "@/entrypoints/utils/wordPrompt";
 
 
 async function gemini(message: any) {
@@ -19,7 +20,7 @@ async function gemini(message: any) {
     });
     if (resp.ok) {
         let result = await resp.json();
-        return result.candidates[0].content.parts[0].text;
+        return interpretLLMContent(result.candidates[0].content.parts[0].text, message.mode);
     } else {
         console.log(resp)
         throw new Error(`翻译失败: ${resp.status} ${resp.statusText} body: ${await resp.text()}`);
