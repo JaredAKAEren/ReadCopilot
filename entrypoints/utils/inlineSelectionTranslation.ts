@@ -219,8 +219,10 @@ export function completeInlineSelectionTranslation(
     result.classList.add('is-empty');
   }
 
-  // word 模式且有 payload 时，append icon SVG（hover 浮 popover）
-  if (session.mode === 'word' && payload) {
+  // word 模式且有富 payload（至少一个词典字段）时，append icon SVG（hover 浮 popover）。
+  // 软降级时 payload 只剩 translation，无词典数据，此时不渲染 icon。
+  const hasRichPayload = !!(payload && (payload.ipa || payload.pronunciation || payload.contextualMeaning || (payload.definitions?.length ?? 0) > 0));
+  if (session.mode === 'word' && payload && hasRichPayload) {
     session.payload = payload;
     const icon = createIconElement();
     result.appendChild(icon);
