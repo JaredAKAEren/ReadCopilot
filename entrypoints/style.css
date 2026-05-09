@@ -345,3 +345,38 @@
         transform: rotate(360deg);
     }
 }
+
+.fr-inline-selection-icon {
+    display: inline-block;
+    width: 11px;
+    height: 11px;
+    margin-left: 3px;
+    color: #9ca3af;
+    cursor: help;
+    transform: translateY(-0.45em);
+    transition: color 0.15s;
+}
+
+.fr-inline-selection-icon svg {
+    display: block;
+    width: 11px;
+    height: 11px;
+}
+
+.fr-inline-selection-result:hover .fr-inline-selection-icon {
+    color: #4f8cff;
+}
+
+.fr-inline-selection-result.is-empty {
+    margin-left: 4px;
+}
+
+.fr-inline-selection-source.fr-source-active {
+    background: rgba(79, 140, 255, 0.20);
+}
+
+@media (prefers-color-scheme: dark) {
+    .fr-inline-selection-icon { color: #6b7280; }
+    .fr-inline-selection-result:hover .fr-inline-selection-icon { color: #69c0ff; }
+    .fr-inline-selection-source.fr-source-active { background: rgba(105, 192, 255, 0.25); }
+}
