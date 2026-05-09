@@ -1,3 +1,7 @@
+import { looksLikeWord, extractSentence } from './wordHeuristic';
+import type { WordPayload } from './wordPrompt';
+import { config } from './config';
+
 const BLOCK_TAGS = new Set([
   'ADDRESS', 'ARTICLE', 'ASIDE', 'BLOCKQUOTE', 'DD', 'DIV', 'DL', 'DT',
   'FIELDSET', 'FIGCAPTION', 'FIGURE', 'FOOTER', 'FORM', 'H1', 'H2', 'H3',
@@ -8,12 +12,18 @@ const BLOCK_TAGS = new Set([
 const SOURCE_ATTR = 'data-fr-inline-selection-source';
 const STATUS_ATTR = 'data-fr-inline-selection-status';
 const RESULT_ATTR = 'data-fr-inline-selection-result';
+const TIER_ATTR = 'data-fr-inline-selection-tier';
 
 let sourceCounter = 0;
 
 export interface InlineSelectionSession {
   sourceId: string;
+  tier: 'word' | 'outer';
+  mode: 'word' | 'sentence';
+  sentence?: string;
   sourceElements: HTMLElement[];
+  resultAnchor: HTMLElement;
+  payload?: WordPayload;
 }
 
 interface TextFragment {
@@ -49,11 +59,16 @@ export function beginInlineSelectionTranslation(range: Range): InlineSelectionSe
   const reuseDecision = getSourceReuseDecision(workingRange, block);
   if (!reuseDecision.valid) return null;
 
+  const text = workingRange.toString();
+  const tier: 'word' | 'outer' = looksLikeWord(text, config.to) ? 'word' : 'outer';
+  const mode: 'word' | 'sentence' = tier === 'word' ? 'word' : 'sentence';
+  const sentence = mode === 'word' ? extractSentence(workingRange, block) : undefined;
+
   const existingSourceId = reuseDecision.sourceId;
   const sourceId = existingSourceId ?? `fr-inline-${Date.now()}-${sourceCounter++}`;
   const sourceElements = existingSourceId
     ? getSourceElements(sourceId)
-    : markRange(workingRange, block, sourceId);
+    : markRange(workingRange, block, sourceId, tier);
 
   if (!sourceElements.length) return null;
 
@@ -71,7 +86,14 @@ export function beginInlineSelectionTranslation(range: Range): InlineSelectionSe
 
   sourceElements[sourceElements.length - 1].insertAdjacentElement('afterend', loading);
 
-  return { sourceId, sourceElements };
+  return {
+    sourceId,
+    tier,
+    mode,
+    sentence,
+    sourceElements,
+    resultAnchor: sourceElements[sourceElements.length - 1], // 临时 anchor，Task 8 用 computeResultAnchor 改写
+  };
 }
 
 export function completeInlineSelectionTranslation(
@@ -112,8 +134,8 @@ export function cleanupInlineSelectionTranslations(): void {
   });
 }
 
-function markRange(range: Range, block: HTMLElement, sourceId: string): HTMLElement[] {
-  const wrapper = createSourceWrapper(sourceId);
+function markRange(range: Range, block: HTMLElement, sourceId: string, tier: 'word' | 'outer'): HTMLElement[] {
+  const wrapper = createSourceWrapper(sourceId, tier);
 
   try {
     range.surroundContents(wrapper);
@@ -121,19 +143,20 @@ function markRange(range: Range, block: HTMLElement, sourceId: string): HTMLElem
   } catch {
     const fragments = collectTextFragments(range, block);
     return fragments
-      .map((fragment) => wrapTextFragment(fragment, sourceId))
+      .map((fragment) => wrapTextFragment(fragment, sourceId, tier))
       .filter((element): element is HTMLElement => element !== null);
   }
 }
 
-function createSourceWrapper(sourceId: string): HTMLElement {
+function createSourceWrapper(sourceId: string, tier: 'word' | 'outer'): HTMLElement {
   const wrapper = document.createElement('span');
   wrapper.className = 'fr-inline-selection-source';
   wrapper.setAttribute(SOURCE_ATTR, sourceId);
+  wrapper.setAttribute(TIER_ATTR, tier);
   return wrapper;
 }
 
-function wrapTextFragment(fragment: TextFragment, sourceId: string): HTMLElement | null {
+function wrapTextFragment(fragment: TextFragment, sourceId: string, tier: 'word' | 'outer'): HTMLElement | null {
   if (fragment.start >= fragment.end) return null;
 
   let selectedNode = fragment.node;
@@ -144,7 +167,7 @@ function wrapTextFragment(fragment: TextFragment, sourceId: string): HTMLElement
     selectedNode = selectedNode.splitText(fragment.start);
   }
 
-  const wrapper = createSourceWrapper(sourceId);
+  const wrapper = createSourceWrapper(sourceId, tier);
   selectedNode.parentNode?.insertBefore(wrapper, selectedNode);
   wrapper.appendChild(selectedNode);
   return wrapper;
@@ -154,6 +177,9 @@ function collectTextFragments(range: Range, root: HTMLElement): TextFragment[] {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode(node) {
       if (!node.textContent?.trim()) return NodeFilter.FILTER_REJECT;
+      // 已被标记为某个 source 内部的文本节点 → 跳过，新建 source 自动绕开
+      const parentEl = node.parentElement;
+      if (parentEl?.closest(`[${SOURCE_ATTR}]`)) return NodeFilter.FILTER_REJECT;
       return range.intersectsNode(node) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
     },
   });
