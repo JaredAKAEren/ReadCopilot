@@ -53,6 +53,15 @@ function partiallyOverlapsRange(el: HTMLElement, range: Range): boolean {
   return intersects && (startsBefore || endsAfter) && !isFullyInsideRange(el, range);
 }
 
+function isRangeFullyInsideElement(range: Range, el: HTMLElement): boolean {
+  const elRange = document.createRange();
+  elRange.selectNodeContents(el);
+  const startsAfter = range.compareBoundaryPoints(Range.START_TO_START, elRange) >= 0;
+  const endsBefore = range.compareBoundaryPoints(Range.END_TO_END, elRange) <= 0;
+  elRange.detach();
+  return startsAfter && endsBefore;
+}
+
 function computeResultAnchor(range: Range, block: HTMLElement): HTMLElement | null {
   const all = Array.from(block.querySelectorAll<HTMLElement>(`[${SOURCE_ATTR}]`));
   const inside = all.filter((el) => isFullyInsideRange(el, range));
@@ -88,6 +97,11 @@ function getSourceReuseDecision(range: Range, block: HTMLElement, newTier: 'word
     const rangeText = range.toString().trim();
     const groupText = group.map((el) => el.textContent ?? '').join('').trim();
     if (rangeText === groupText) return { kind: 'reuse', sourceId: id };
+  }
+
+  // 2.5. 防御：range 完全落在某个已有 source 内部（且不等于它，因为相等已在 step 2 处理）→ 拒绝
+  for (const src of allSources) {
+    if (isRangeFullyInsideElement(range, src)) return { kind: 'reject' };
   }
 
   // 3. 覆盖/绕开：完全落在 range 内的 source
@@ -181,7 +195,7 @@ export function completeInlineSelectionTranslation(
   result.className = 'fr-inline-selection-result';
   result.setAttribute(RESULT_ATTR, session.sourceId);
 
-  const sourceText = session.sourceElements.map((el) => el.textContent ?? '').join('');
+  const sourceText = session.sourceElements.map((el) => el.textContent ?? '').join('').trim();
   const showText = !(payload && payload.translation === sourceText);
   if (showText) {
     result.textContent = translatedText;
