@@ -35,7 +35,7 @@ export function buildWordUserPrompt(word: string, sentence: string): string {
 // 解析模型响应。剥离 markdown fence；校验 translation 非空；其余字段类型容错。
 export function parseWordResponse(raw: string): WordPayload | null {
   try {
-    const cleaned = raw.trim().replace(/^```json\s*/i, '').replace(/\s*```$/i, '');
+    const cleaned = contentPostHandler(raw).trim().replace(/^```json\s*/i, '').replace(/\s*```$/i, '');
     const obj = JSON.parse(cleaned);
     if (typeof obj?.translation !== 'string' || !obj.translation.trim()) return null;
     return {
@@ -58,6 +58,15 @@ export function isValidWordPayload(v: unknown): v is WordPayload {
   return typeof v === 'object' && v !== null
     && typeof (v as WordPayload).translation === 'string'
     && (v as WordPayload).translation.trim() !== '';
+}
+
+export function hasRichWordPayload(payload: WordPayload): boolean {
+  return !!(
+    payload.ipa
+    || payload.pronunciation
+    || payload.contextualMeaning
+    || (payload.definitions?.length ?? 0) > 0
+  );
 }
 
 // 集中 LLM 服务的响应分流。word 模式：parse JSON，失败软降级为纯文本译文（无词典数据）。

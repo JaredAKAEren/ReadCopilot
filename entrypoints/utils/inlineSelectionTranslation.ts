@@ -272,10 +272,7 @@ export function cleanupInlineSelectionTranslations(): void {
   unmountWordPopover();
   document.querySelectorAll(`[${STATUS_ATTR}], [${RESULT_ATTR}]`).forEach((node) => node.remove());
   document.querySelectorAll<HTMLElement>(`[${SOURCE_ATTR}]`).forEach((node) => {
-    node.removeAttribute(SOURCE_ATTR);
-    node.removeAttribute(TIER_ATTR);
-    node.classList.remove('fr-inline-selection-source');
-    node.classList.remove('fr-source-active');
+    unwrapSourceElement(node);
   });
 }
 
@@ -375,13 +372,17 @@ function attachIconHover(icon: HTMLElement, session: InlineSelectionSession, pay
 function removeSource(sourceId: string): void {
   const sources = getSourceElements(sourceId);
   for (const src of sources) {
-    const parent = src.parentNode;
-    if (!parent) continue;
-    while (src.firstChild) parent.insertBefore(src.firstChild, src);
-    parent.removeChild(src);
+    unwrapSourceElement(src);
   }
   removeStatus(sourceId);
   removeResult(sourceId);
+}
+
+function unwrapSourceElement(src: HTMLElement): void {
+  const parent = src.parentNode;
+  if (!parent) return;
+  while (src.firstChild) parent.insertBefore(src.firstChild, src);
+  parent.removeChild(src);
 }
 
 function markRange(
