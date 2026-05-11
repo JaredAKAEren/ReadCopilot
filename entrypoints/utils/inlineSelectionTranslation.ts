@@ -78,10 +78,20 @@ function isRangeFullyInsideElement(range: Range, el: HTMLElement): boolean {
   return startsAfter && endsBefore;
 }
 
-function computeResultAnchor(range: Range, block: HTMLElement): HTMLElement | null {
-  const all = Array.from(block.querySelectorAll<HTMLElement>(`[${SOURCE_ATTR}]`));
-  const inside = all.filter((el) => isFullyInsideRange(el, range));
-  return inside[inside.length - 1] ?? null;
+// 在显式候选集合中按文档序取最末（DOCUMENT_POSITION_FOLLOWING）。
+// 不查 DOM：避免把嵌套在新 outer 内的 word source / 已有 result span 内的旧 wrapper
+// 误选为 anchor。调用方需保证 candidates 之间互不嵌套（sourceElements + 提前抓取的
+// preservedWordSources 满足这点，因为后者在 markRange 走 fragment 路径时是 outer
+// 兄弟节点，不在任何 outer 内部）。
+function pickLastByDocumentOrder(candidates: HTMLElement[]): HTMLElement | null {
+  if (candidates.length === 0) return null;
+  let last = candidates[0];
+  for (let i = 1; i < candidates.length; i++) {
+    if (last.compareDocumentPosition(candidates[i]) & Node.DOCUMENT_POSITION_FOLLOWING) {
+      last = candidates[i];
+    }
+  }
+  return last;
 }
 
 // ─── Reuse decision ───────────────────────────────────────────────────────────
@@ -166,16 +176,26 @@ export function beginInlineSelectionTranslation(range: Range): InlineSelectionSe
 
   let sourceId: string;
   let sourceElements: HTMLElement[];
+  let preservedWordSources: HTMLElement[] = [];
 
   if (decision.kind === 'reuse') {
     sourceId = decision.sourceId;
     sourceElements = getSourceElements(sourceId);
   } else {
+    // 在 markRange 前抓取要保留的 word source（cover 场景下它们是新 outer 的兄弟）。
     if (decision.kind === 'cover') {
+      preservedWordSources = Array.from(block.querySelectorAll<HTMLElement>(`[${SOURCE_ATTR}]`))
+        .filter((el) =>
+          el.getAttribute(TIER_ATTR) === 'word' &&
+          isFullyInsideRange(el, workingRange),
+        );
       for (const id of decision.idsToRemove) removeSource(id);
     }
     sourceId = `fr-inline-${Date.now()}-${sourceCounter++}`;
-    sourceElements = markRange(workingRange, block, sourceId, tier);
+    // 有 word source 残留时禁用 surroundContents：否则它会把 word source +
+    // 对应 result span 整段嵌进新 outer 里，anchor 与 fragment 计算都会错位。
+    const forceFragments = preservedWordSources.length > 0;
+    sourceElements = markRange(workingRange, block, sourceId, tier, forceFragments);
   }
 
   if (!sourceElements.length) return null;
@@ -183,8 +203,9 @@ export function beginInlineSelectionTranslation(range: Range): InlineSelectionSe
   removeStatus(sourceId);
   removeResult(sourceId);
 
-  // result anchor：新选区内所有 source（任 tier）按文档序最末
-  const anchor = computeResultAnchor(workingRange, block) ?? sourceElements[sourceElements.length - 1];
+  // anchor：在 sourceElements + preservedWordSources 这个互不嵌套的集合里取文档序最末。
+  const anchor = pickLastByDocumentOrder([...sourceElements, ...preservedWordSources])
+    ?? sourceElements[sourceElements.length - 1];
 
   // loading span 紧跟 anchor
   const loading = document.createElement('span');
@@ -363,18 +384,26 @@ function removeSource(sourceId: string): void {
   removeResult(sourceId);
 }
 
-function markRange(range: Range, block: HTMLElement, sourceId: string, tier: 'word' | 'outer'): HTMLElement[] {
-  const wrapper = createSourceWrapper(sourceId, tier);
-
-  try {
-    range.surroundContents(wrapper);
-    return [wrapper];
-  } catch {
-    const fragments = collectTextFragments(range, block);
-    return fragments
-      .map((fragment) => wrapTextFragment(fragment, sourceId, tier))
-      .filter((element): element is HTMLElement => element !== null);
+function markRange(
+  range: Range,
+  block: HTMLElement,
+  sourceId: string,
+  tier: 'word' | 'outer',
+  forceFragments = false,
+): HTMLElement[] {
+  if (!forceFragments) {
+    const wrapper = createSourceWrapper(sourceId, tier);
+    try {
+      range.surroundContents(wrapper);
+      return [wrapper];
+    } catch {
+      // 落到 fragment 路径
+    }
   }
+  const fragments = collectTextFragments(range, block);
+  return fragments
+    .map((fragment) => wrapTextFragment(fragment, sourceId, tier))
+    .filter((element): element is HTMLElement => element !== null);
 }
 
 function createSourceWrapper(sourceId: string, tier: 'word' | 'outer'): HTMLElement {
@@ -406,9 +435,13 @@ function collectTextFragments(range: Range, root: HTMLElement): TextFragment[] {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode(node) {
       if (!node.textContent?.trim()) return NodeFilter.FILTER_REJECT;
-      // 已被标记为某个 source 内部的文本节点 → 跳过，新建 source 自动绕开
+      // 跳过已存在的 source / 翻译结果 / 状态节点内部的文本，
+      // 否则覆盖型 outer 划句时会把已译单词的 result 文本（如"骨干网络"）
+      // 当成普通原文重新包成 source，污染 DOM 与 anchor 计算。
       const parentEl = node.parentElement;
-      if (parentEl?.closest(`[${SOURCE_ATTR}]`)) return NodeFilter.FILTER_REJECT;
+      if (parentEl?.closest(`[${SOURCE_ATTR}], [${RESULT_ATTR}], [${STATUS_ATTR}]`)) {
+        return NodeFilter.FILTER_REJECT;
+      }
       return range.intersectsNode(node) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
     },
   });

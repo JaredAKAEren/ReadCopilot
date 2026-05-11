@@ -300,9 +300,17 @@
 }
 
 .fr-inline-selection-source {
-    border-bottom: 2px solid #4f8cff;
     background: rgba(79, 140, 255, 0.10);
     border-radius: 2px;
+}
+
+.fr-inline-selection-source[data-fr-inline-selection-tier="outer"] {
+    border-bottom: 2px solid #4f8cff;
+}
+
+.fr-inline-selection-source[data-fr-inline-selection-tier="word"] {
+    border-bottom: 1.5px dashed #4f8cff;
+    margin: 0 2px;
 }
 
 .fr-inline-selection-loading,
