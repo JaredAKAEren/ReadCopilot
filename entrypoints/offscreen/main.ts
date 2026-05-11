@@ -25,6 +25,29 @@ const languageMap: { [key: string]: string } = {
     'tr': 'tr'
 };
 
+type ChromeTranslateOffscreenMessage = {
+    type: 'CHROME_TRANSLATE_OFFSCREEN';
+    data: {
+        text: string;
+        from: string;
+        to: string;
+    };
+};
+
+function isChromeTranslateOffscreenMessage(message: unknown): message is ChromeTranslateOffscreenMessage {
+    if (!message || typeof message !== 'object') {
+        return false;
+    }
+
+    const candidate = message as { type?: unknown; data?: unknown };
+    if (candidate.type !== 'CHROME_TRANSLATE_OFFSCREEN' || !candidate.data || typeof candidate.data !== 'object') {
+        return false;
+    }
+
+    const data = candidate.data as { text?: unknown; from?: unknown; to?: unknown };
+    return typeof data.text === 'string' && typeof data.from === 'string' && typeof data.to === 'string';
+}
+
 // 检查是否支持 Chrome Translation API
 function isChromeTranslationSupported(): boolean {
     console.log('检查 Translation API 支持:', {
@@ -140,7 +163,7 @@ async function performTranslation(text: string, fromLang: string, toLang: string
 }
 
 // 处理翻译请求
-async function handleTranslationRequest(data: any): Promise<string> {
+async function handleTranslationRequest(data: ChromeTranslateOffscreenMessage['data']): Promise<string> {
     const { text, from, to } = data;
     
     if (!text || typeof text !== 'string' || text.trim() === '') {
@@ -211,10 +234,14 @@ async function handleTranslationRequest(data: any): Promise<string> {
 }
 
 // 监听来自 background script 的消息
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((
+    message: unknown,
+    _sender: chrome.runtime.MessageSender,
+    sendResponse: (response: { success: boolean; result?: string; error?: string }) => void,
+) => {
     // console.log('Offscreen 收到消息:', message);
     
-    if (message.type === 'CHROME_TRANSLATE_OFFSCREEN') {
+    if (isChromeTranslateOffscreenMessage(message)) {
         handleTranslationRequest(message.data)
             .then(result => {
                 // console.log('Offscreen 翻译成功:', result.substring(0, 50) + '...');
