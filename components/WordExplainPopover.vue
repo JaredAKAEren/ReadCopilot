@@ -10,9 +10,6 @@
       <div class="fr-word-popover-header">
         <span class="fr-word-popover-word">{{ word }}</span>
         <span v-if="payload.ipa" class="fr-word-popover-ipa">{{ payload.ipa }}</span>
-        <div v-if="payload.pronunciation" class="fr-word-popover-pronunciation">
-          {{ payload.pronunciation }}
-        </div>
       </div>
 
       <div v-if="payload.contextualMeaning" class="fr-word-popover-context">
@@ -125,12 +122,6 @@ onBeforeUnmount(() => {
   color: #4f8cff;
 }
 
-.fr-word-popover-pronunciation {
-  margin-top: 4px;
-  font-size: 12px;
-  color: #6b7280;
-}
-
 .fr-word-popover-context {
   background: linear-gradient(180deg, rgba(79,140,255,0.08), rgba(79,140,255,0.03));
   border-left: 3px solid #4f8cff;
@@ -201,7 +192,6 @@ onBeforeUnmount(() => {
 .fr-word-popover.fr-dark-theme .fr-word-popover-section { border-color: #333; }
 .fr-word-popover.fr-dark-theme .fr-word-popover-context-text { color: #ffffff; }
 .fr-word-popover.fr-dark-theme .fr-word-popover-meaning { color: #ffffff; }
-.fr-word-popover.fr-dark-theme .fr-word-popover-pronunciation { color: #aaa; }
 .fr-word-popover.fr-dark-theme .fr-word-popover-defs-label { color: #d1d5db; }
 .fr-word-popover.fr-dark-theme .fr-word-popover-pos { color: #d1d5db; }
 .fr-word-popover.fr-dark-theme .fr-word-popover-context-label { color: #69c0ff; }

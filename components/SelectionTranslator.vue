@@ -329,25 +329,16 @@ const getTranslation = async () => {
   }
 };
 
-const handleInlineTranslate = async () => {
-  if (isUnmounted || !selectedText.value || !selectRange.value || isInlineTranslating.value) return;
+const getInlineSessionText = (session: InlineSelectionSession) => {
+  return session.sourceElements.map((el) => el.textContent ?? '').join('').trim();
+};
 
-  const range = selectRange.value.cloneRange();
-  const inlineText = range.toString().trim();
-  if (!inlineText || !canUseInlineSelection(range)) {
-    hideIndicator();
-    return;
-  }
+const translateInlineSelectionSession = async (session: InlineSelectionSession) => {
+  if (isUnmounted || isInlineTranslating.value) return;
 
-  const session: InlineSelectionSession | null = beginInlineSelectionTranslation(range);
-  if (!session) {
-    hideIndicator();
-    return;
-  }
+  const inlineText = getInlineSessionText(session);
+  if (!inlineText) return;
 
-  showIndicator.value = false;
-  showTooltip.value = false;
-  selectedText.value = inlineText;
   isInlineTranslating.value = true;
 
   try {
@@ -370,7 +361,9 @@ const handleInlineTranslate = async () => {
     }
   } catch (err) {
     if (!isUnmounted) {
-      failInlineSelectionTranslation(session);
+      failInlineSelectionTranslation(session, '翻译失败，点击重试', () => {
+        void translateInlineSelectionSession(session);
+      });
       console.error('Inline translation error:', (err as Error).message);
     }
   } finally {
@@ -378,6 +371,29 @@ const handleInlineTranslate = async () => {
       isInlineTranslating.value = false;
     }
   }
+};
+
+const handleInlineTranslate = async () => {
+  if (isUnmounted || !selectedText.value || !selectRange.value || isInlineTranslating.value) return;
+
+  const range = selectRange.value.cloneRange();
+  const inlineText = range.toString().trim();
+  if (!inlineText || !canUseInlineSelection(range)) {
+    hideIndicator();
+    return;
+  }
+
+  const session: InlineSelectionSession | null = beginInlineSelectionTranslation(range);
+  if (!session) {
+    hideIndicator();
+    return;
+  }
+
+  showIndicator.value = false;
+  showTooltip.value = false;
+  selectedText.value = inlineText;
+
+  await translateInlineSelectionSession(session);
 };
 
 // 复制翻译文本

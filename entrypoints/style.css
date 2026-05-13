@@ -345,6 +345,15 @@
     color: #d92d20;
 }
 
+.fr-inline-selection-error.is-retryable {
+    cursor: pointer;
+}
+
+.fr-inline-selection-error.is-retryable:hover,
+.fr-inline-selection-error.is-retryable:focus-visible {
+    text-decoration: underline;
+}
+
 @keyframes frInlineSelectionSpin {
     from {
         transform: rotate(0deg);

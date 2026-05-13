@@ -4,7 +4,6 @@ import { contentPostHandler } from './check';
 export interface WordPayload {
   translation: string;
   ipa?: string;
-  pronunciation?: string;
   definitions?: Array<{ pos: string; meaning: string }>;
   contextualMeaning?: string;
 }
@@ -16,7 +15,6 @@ Schema:
 {
   "translation": string,        // 中文主译；专有名词/术语保留原名或音译
   "ipa": string,                // 美式音标，例 "/kənˈstreɪnt/"
-  "pronunciation": string,      // 英文常见词类比的发音指导，例 "kuhn-STRAYNT (like 'plain')"
   "definitions": [              // 多义释义（中文），按常见度排序
     { "pos": string, "meaning": string }
   ],
@@ -41,7 +39,6 @@ export function parseWordResponse(raw: string): WordPayload | null {
     return {
       translation: obj.translation.trim(),
       ipa: typeof obj.ipa === 'string' ? obj.ipa : undefined,
-      pronunciation: typeof obj.pronunciation === 'string' ? obj.pronunciation : undefined,
       definitions: Array.isArray(obj.definitions)
         ? obj.definitions
             .filter((d: any) => d && typeof d === 'object' && d.pos && d.meaning)
@@ -63,7 +60,6 @@ export function isValidWordPayload(v: unknown): v is WordPayload {
 export function hasRichWordPayload(payload: WordPayload): boolean {
   return !!(
     payload.ipa
-    || payload.pronunciation
     || payload.contextualMeaning
     || (payload.definitions?.length ?? 0) > 0
   );

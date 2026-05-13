@@ -48,6 +48,8 @@ interface TextFragment {
   end: number;
 }
 
+type InlineSelectionRetryHandler = () => void | Promise<void>;
+
 // ─── Overlap / anchor utilities ───────────────────────────────────────────────
 
 function isFullyInsideRange(el: HTMLElement, range: Range): boolean {
@@ -207,17 +209,23 @@ export function beginInlineSelectionTranslation(range: Range): InlineSelectionSe
   const anchor = pickLastByDocumentOrder([...sourceElements, ...preservedWordSources])
     ?? sourceElements[sourceElements.length - 1];
 
-  // loading span 紧跟 anchor
+  insertLoadingStatus(sourceId, anchor);
+
+  return { sourceId, tier, mode, sentence, sourceElements, resultAnchor: anchor };
+}
+
+function insertLoadingStatus(sourceId: string, anchor: HTMLElement): void {
+  removeStatus(sourceId);
+
   const loading = document.createElement('span');
   loading.className = 'fr-inline-selection-loading';
   loading.setAttribute(STATUS_ATTR, sourceId);
   loading.setAttribute('aria-label', '翻译中');
+
   const spinner = document.createElement('span');
   spinner.className = 'fr-inline-selection-spinner';
   loading.appendChild(spinner);
   anchor.insertAdjacentElement('afterend', loading);
-
-  return { sourceId, tier, mode, sentence, sourceElements, resultAnchor: anchor };
 }
 
 export function completeInlineSelectionTranslation(
@@ -242,7 +250,7 @@ export function completeInlineSelectionTranslation(
 
   // word 模式且有富 payload（至少一个词典字段）时，append icon SVG（hover 浮 popover）。
   // 软降级时 payload 只剩 translation，无词典数据，此时不渲染 icon。
-  const hasRichPayload = !!(payload && (payload.ipa || payload.pronunciation || payload.contextualMeaning || (payload.definitions?.length ?? 0) > 0));
+  const hasRichPayload = !!(payload && (payload.ipa || payload.contextualMeaning || (payload.definitions?.length ?? 0) > 0));
   if (session.mode === 'word' && payload && hasRichPayload) {
     session.payload = payload;
     const icon = createIconElement();
@@ -256,6 +264,7 @@ export function completeInlineSelectionTranslation(
 export function failInlineSelectionTranslation(
   session: InlineSelectionSession,
   message = '翻译失败',
+  onRetry?: InlineSelectionRetryHandler,
 ): void {
   removeStatus(session.sourceId);
   removeResult(session.sourceId);
@@ -264,6 +273,26 @@ export function failInlineSelectionTranslation(
   error.className = 'fr-inline-selection-error';
   error.setAttribute(RESULT_ATTR, session.sourceId);
   error.textContent = message;
+
+  if (onRetry) {
+    error.classList.add('is-retryable');
+    error.setAttribute('role', 'button');
+    error.tabIndex = 0;
+    error.title = '重新翻译';
+
+    const retry = () => {
+      removeResult(session.sourceId);
+      insertLoadingStatus(session.sourceId, session.resultAnchor);
+      void onRetry();
+    };
+
+    error.addEventListener('click', retry);
+    error.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      retry();
+    });
+  }
 
   session.resultAnchor.insertAdjacentElement('afterend', error);
 }
