@@ -419,14 +419,10 @@ const copyTranslation = () => {
 const toggleAudio = (text: string, e?: Event) => {
   if (!text) return;
 
-  // 阻止事件冒泡，避免触发外部点击事件导致弹窗关闭
-  // 针对Firefox兼容性问题，优先使用传入的事件对象，否则使用全局event
+  // 只阻止组件内部音频按钮事件，避免误取消原始页面点击行为
   if (e) {
     e.stopPropagation();
     e.preventDefault();
-  } else if (event) {
-    event.stopPropagation();
-    event.preventDefault();
   }
   
   // 确保弹窗不会消失
@@ -502,13 +498,10 @@ const toggleAudio = (text: string, e?: Event) => {
 
 // 停止音频播放
 const stopAudio = (e?: Event) => {
-  // 阻止事件冒泡
+  // 只阻止组件内部音频按钮事件，避免误取消原始页面点击行为
   if (e) {
     e.stopPropagation();
     e.preventDefault();
-  } else if (event) {
-    event.stopPropagation();
-    event.preventDefault();
   }
   
   if (audioElement.value) {
