@@ -1,19 +1,22 @@
 <template>
   <teleport to="body">
     <div ref="selection-ref" class="fr-selection-translator-wrapper">
-      <button
-        v-if="showIndicator && config.selectionTranslatorMode === 'inline'"
-        class="fr-inline-translate-button"
-        :disabled="isInlineTranslating"
-        title="翻译选中文本"
-        @mousedown.stop.prevent
-        @mouseup.stop.prevent
-        @click.stop.prevent="handleInlineTranslate">
-        译
-      </button>
+      <Transition name="fr-inline-translate">
+        <button
+          v-if="showIndicator && config.selectionTranslatorMode === 'inline'"
+          class="fr-inline-translate-button"
+          :class="{ 'fr-dark-theme': isDarkTheme }"
+          :disabled="isInlineTranslating"
+          title="翻译选中文本"
+          @mousedown.stop.prevent
+          @mouseup.stop.prevent
+          @click.stop.prevent="handleInlineTranslate">
+          译
+        </button>
+      </Transition>
 
       <div
-        v-else-if="showIndicator"
+        v-if="showIndicator && config.selectionTranslatorMode !== 'inline'"
         class="fr-selection-indicator"
         @mouseenter="handleMouseEnter"
         @mouseleave="handleMouseLeave">
@@ -796,27 +799,72 @@ onBeforeUnmount(() => {
 
 .fr-inline-translate-button {
   position: absolute;
-  min-width: 28px;
-  height: 28px;
-  padding: 0 8px;
-  border: none;
-  border-radius: 14px;
-  background: #1677ff;
-  color: #fff;
-  font-size: 14px;
-  line-height: 28px;
+  display: grid;
+  place-items: center;
+  width: 21px;
+  height: 21px;
+  padding: 0;
+  border: 1px solid rgba(74, 128, 205, 0.34);
+  border-radius: 50%;
+  background: #f7fbff;
+  color: #4a7dcc;
+  font-size: 11px;
+  font-weight: 680;
+  line-height: 1;
   cursor: pointer;
   z-index: 9999;
-  box-shadow: 0 4px 12px rgba(22, 119, 255, 0.28);
+  box-shadow: 0 2px 6px rgba(30, 96, 180, 0.08);
+  transition:
+    color 140ms ease,
+    background-color 140ms ease,
+    border-color 140ms ease,
+    box-shadow 140ms ease,
+    transform 140ms ease;
 }
 
 .fr-inline-translate-button:hover {
-  background: #0958d9;
+  border-color: rgba(74, 128, 205, 0.58);
+  background: #eaf3ff;
+  color: #245ebe;
+  box-shadow: 0 3px 8px rgba(30, 96, 180, 0.1);
+  transform: translateY(-1px);
+}
+
+.fr-inline-translate-button.fr-dark-theme {
+  border-color: rgba(140, 187, 255, 0.35);
+  background: #23334d;
+  color: #9fc5ff;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.22);
+}
+
+.fr-inline-translate-button.fr-dark-theme:hover {
+  border-color: rgba(160, 205, 255, 0.52);
+  background: #2d4263;
+  color: #c3dcff;
 }
 
 .fr-inline-translate-button:disabled {
   cursor: default;
-  opacity: 0.65;
+  opacity: 0.48;
+  transform: none;
+}
+
+.fr-inline-translate-enter-active {
+  transition:
+    opacity 150ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    transform 150ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.fr-inline-translate-leave-active {
+  transition:
+    opacity 110ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    transform 110ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.fr-inline-translate-enter-from,
+.fr-inline-translate-leave-to {
+  opacity: 0;
+  transform: translateY(2px) scale(0.92);
 }
 
 [data-placement="left"] .fr-selection-indicator {
