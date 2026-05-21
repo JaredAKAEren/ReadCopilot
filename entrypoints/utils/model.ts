@@ -79,7 +79,7 @@ export class Config {
         this.count = 0;
         this.theme = 'auto';  // 默认跟随系统
         this.useCache = true; // 默认开启缓存
-        this.disableFloatingBall = false; // 默认启用悬浮球
+        this.disableFloatingBall = true; // 默认关闭全文翻译悬浮球
         this.floatingBallPosition = 'right'; // 默认在右侧
         this.floatingBallHotkey = 'Alt+T'; // 默认快捷键为 Alt+T
         this.customFloatingBallHotkey = ''; // 自定义快捷键为空
