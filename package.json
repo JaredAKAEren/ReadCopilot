@@ -13,6 +13,7 @@
     "zip": "wxt zip",
     "zip:firefox": "wxt zip -b firefox",
     "compile": "vue-tsc --noEmit",
+    "test:inline-word-flow": "node --test scripts/inline-word-translation-flow.test.mjs",
     "test:deploy:chrome-local": "node --test scripts/deploy-chrome-local.test.mjs",
     "postinstall": "wxt prepare",
     "docs:dev": "vitepress dev docs",
