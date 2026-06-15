@@ -118,7 +118,17 @@ import {
   failInlineSelectionTranslation,
   type InlineSelectionSession,
 } from '@/entrypoints/utils/inlineSelectionTranslation';
-import { autoPlacement, autoUpdate, computePosition, flip, hide, inline, offset, shift } from '@floating-ui/dom';
+import {
+  autoPlacement,
+  autoUpdate,
+  computePosition,
+  flip,
+  hide,
+  inline,
+  offset,
+  shift,
+  type ReferenceElement,
+} from '@floating-ui/dom';
 
 // 状态变量
 const selectedText = ref('');
@@ -144,15 +154,41 @@ let isUnmounted = false;
 
 const containerRef = useTemplateRef('selection-ref');
 
-// 自动更新小红点位置
+const getRangeContextElement = (range: Range): Element | undefined => {
+  const container = range.commonAncestorContainer;
+  return container.nodeType === Node.ELEMENT_NODE
+    ? container as Element
+    : container.parentElement ?? undefined;
+};
+
+const getLastVisibleRangeRect = (range: Range): DOMRect | null => {
+  const rects = Array.from(range.getClientRects()).filter(rect => rect.width > 0 || rect.height > 0);
+  return rects.length > 0 ? rects[rects.length - 1] : null;
+};
+
+const getSelectionPositionReference = (range: Range): ReferenceElement => {
+  if (config.selectionTranslatorMode !== 'inline') return range;
+
+  return {
+    getBoundingClientRect: () => getLastVisibleRangeRect(range) ?? range.getBoundingClientRect(),
+    getClientRects: () => {
+      const lastRect = getLastVisibleRangeRect(range);
+      return lastRect ? [lastRect] : range.getClientRects();
+    },
+    contextElement: getRangeContextElement(range),
+  };
+};
+
+// 自动更新划词入口位置
 watchEffect((onClean) => {
   const isPositioningActive = showIndicator.value || showTooltip.value;
   const range = selectRange.value;
   const container = containerRef.value;
   if (!isPositioningActive || !range || !container) return;
+  const positionReference = getSelectionPositionReference(range);
 
   const updatePosition = () => {
-    computePosition(range, container, {
+    computePosition(positionReference, container, {
       placement: 'right',
       strategy: 'fixed',
       middleware: [offset(2), flip({fallbackPlacements: ['left', 'right', 'top-start', 'top-end', 'bottom-start', 'bottom-end'], padding: {top: 100, bottom: 100} }), shift(), hide(), inline()],
@@ -166,7 +202,7 @@ watchEffect((onClean) => {
     })
   }
 
-  const cb = autoUpdate(range, container, updatePosition, {
+  const cb = autoUpdate(positionReference, container, updatePosition, {
     animationFrame: true,
   });
 
