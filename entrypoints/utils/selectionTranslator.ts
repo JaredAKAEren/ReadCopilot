@@ -5,48 +5,127 @@ import { storage } from '@wxt-dev/storage';
 
 let selectionTranslatorInstance: any = null;
 let app: any = null;
+let container: HTMLElement | null = null;
+let containerObserver: MutationObserver | null = null;
+let restoreTimer: number | null = null;
+let shouldKeepMounted = false;
+
+const CONTAINER_ID = 'fluent-read-selection-translator-container';
+
+function isMountedInCurrentBody() {
+  return Boolean(
+    selectionTranslatorInstance &&
+    app &&
+    container &&
+    container.isConnected &&
+    container.parentElement === document.body,
+  );
+}
+
+function mountSelectionTranslatorApp() {
+  if (!document.body) return null;
+
+  const existingContainer = document.getElementById(CONTAINER_ID);
+  if (existingContainer) {
+    existingContainer.remove();
+  }
+
+  container = document.createElement('div');
+  container.id = CONTAINER_ID;
+  document.body.appendChild(container);
+
+  app = createApp(SelectionTranslator);
+  selectionTranslatorInstance = app.mount(container);
+
+  return selectionTranslatorInstance;
+}
+
+function unmountSelectionTranslatorApp() {
+  if (app) {
+    app.unmount();
+  }
+
+  selectionTranslatorInstance = null;
+  app = null;
+
+  if (container?.isConnected) {
+    container.remove();
+  } else {
+    document.getElementById(CONTAINER_ID)?.remove();
+  }
+
+  container = null;
+}
+
+function restoreSelectionTranslatorIfDetached() {
+  if (
+    !shouldKeepMounted ||
+    config.disableSelectionTranslator ||
+    config.selectionTranslatorMode === 'disabled' ||
+    isMountedInCurrentBody()
+  ) {
+    return;
+  }
+
+  unmountSelectionTranslatorApp();
+  mountSelectionTranslatorApp();
+}
+
+function startContainerObserver() {
+  if (containerObserver || typeof MutationObserver === 'undefined') return;
+
+  containerObserver = new MutationObserver(() => {
+    if (restoreTimer !== null) return;
+
+    restoreTimer = window.setTimeout(() => {
+      restoreTimer = null;
+      restoreSelectionTranslatorIfDetached();
+    }, 0);
+  });
+
+  containerObserver.observe(document.documentElement, {
+    childList: true,
+    subtree: true,
+  });
+}
+
+function stopContainerObserver() {
+  if (restoreTimer !== null) {
+    window.clearTimeout(restoreTimer);
+    restoreTimer = null;
+  }
+
+  containerObserver?.disconnect();
+  containerObserver = null;
+}
 
 /**
  * 挂载选词翻译组件
  */
 export function mountSelectionTranslator() {
   // 如果已存在实例或配置禁用了此功能，则不创建
-  if (selectionTranslatorInstance || config.disableSelectionTranslator || config.selectionTranslatorMode === 'disabled') {
+  if (config.disableSelectionTranslator || config.selectionTranslatorMode === 'disabled') {
     return;
   }
 
-  // 创建容器元素
-  const container = document.createElement('div');
-  container.id = 'fluent-read-selection-translator-container';
-  document.body.appendChild(container);
+  shouldKeepMounted = true;
+  startContainerObserver();
 
-  // 创建Vue应用实例
-  app = createApp(SelectionTranslator);
+  if (isMountedInCurrentBody()) {
+    return selectionTranslatorInstance;
+  }
 
-  // 挂载应用
-  selectionTranslatorInstance = app.mount(container);
-
-  return selectionTranslatorInstance;
+  unmountSelectionTranslatorApp();
+  return mountSelectionTranslatorApp();
 }
 
 /**
  * 卸载选词翻译组件
  */
 export function unmountSelectionTranslator() {
-  if (selectionTranslatorInstance && app) {
-    // 获取容器
-    const container = document.getElementById('fluent-read-selection-translator-container');
-    
-    // 卸载Vue应用
-    app.unmount();
-    selectionTranslatorInstance = null;
-    app = null;
-    
-    // 移除容器
-    if (container) {
-      container.remove();
-    }
-  }
+  shouldKeepMounted = false;
+  stopContainerObserver();
+  unmountSelectionTranslatorApp();
 }
 
 /**
@@ -73,4 +152,4 @@ function saveConfig() {
   storage.setItem('local:config', JSON.stringify(config)).catch((error) => {
     console.error('Failed to save config:', error);
   });
-} 
+}

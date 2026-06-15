@@ -298,3 +298,102 @@
     border-radius: 3px;
     border: 1px solid #eee;
 }
+
+.fr-inline-selection-source {
+    background: rgba(79, 140, 255, 0.10);
+    border-radius: 2px;
+}
+
+.fr-inline-selection-source[data-fr-inline-selection-tier="outer"] {
+    border-bottom: 2px solid #4f8cff;
+}
+
+.fr-inline-selection-source[data-fr-inline-selection-tier="word"] {
+    border-bottom: 1.5px dashed #4f8cff;
+    margin: 0 2px;
+}
+
+.fr-inline-selection-loading,
+.fr-inline-selection-result,
+.fr-inline-selection-error {
+    display: inline-flex;
+    align-items: center;
+    margin-left: 0.35em;
+    vertical-align: baseline;
+    font-size: 0.78em;
+    line-height: 1.4;
+}
+
+.fr-inline-selection-loading {
+    color: #667085;
+}
+
+.fr-inline-selection-spinner {
+    width: 0.78em;
+    height: 0.78em;
+    border: 2px solid rgba(102, 112, 133, 0.35);
+    border-top-color: #4f8cff;
+    border-radius: 50%;
+    animation: frInlineSelectionSpin 0.85s linear infinite;
+}
+
+.fr-inline-selection-result {
+    color: #667085;
+}
+
+.fr-inline-selection-error {
+    color: #d92d20;
+}
+
+.fr-inline-selection-error.is-retryable {
+    cursor: pointer;
+}
+
+.fr-inline-selection-error.is-retryable:hover,
+.fr-inline-selection-error.is-retryable:focus-visible {
+    text-decoration: underline;
+}
+
+@keyframes frInlineSelectionSpin {
+    from {
+        transform: rotate(0deg);
+    }
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.fr-inline-selection-icon {
+    display: inline-block;
+    width: 11px;
+    height: 11px;
+    margin-left: 3px;
+    color: #9ca3af;
+    cursor: help;
+    transform: translateY(-0.45em);
+    transition: color 0.15s;
+}
+
+.fr-inline-selection-icon svg {
+    display: block;
+    width: 11px;
+    height: 11px;
+}
+
+.fr-inline-selection-result:hover .fr-inline-selection-icon {
+    color: #4f8cff;
+}
+
+.fr-inline-selection-result.is-empty {
+    margin-left: 4px;
+}
+
+.fr-inline-selection-source.fr-source-active {
+    background: rgba(79, 140, 255, 0.20);
+}
+
+@media (prefers-color-scheme: dark) {
+    .fr-inline-selection-icon { color: #6b7280; }
+    .fr-inline-selection-result:hover .fr-inline-selection-icon { color: #69c0ff; }
+    .fr-inline-selection-source.fr-source-active { background: rgba(105, 192, 255, 0.25); }
+}

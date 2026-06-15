@@ -1,7 +1,7 @@
 import { method, urls } from "../utils/constant";
 import { deepseekMsgTemplate } from "../utils/template";
 import { config } from "@/entrypoints/utils/config";
-import { contentPostHandler } from "@/entrypoints/utils/check";
+import { interpretLLMContent } from "@/entrypoints/utils/wordPrompt";
 
 async function deepseek(message: any) {
     try {
@@ -15,7 +15,7 @@ async function deepseek(message: any) {
         const resp = await fetch(url, {
             method: method.POST,
             headers,
-            body: deepseekMsgTemplate(message.origin)
+            body: deepseekMsgTemplate(message)
         });
 
         if (!resp.ok) {
@@ -23,7 +23,7 @@ async function deepseek(message: any) {
         }
 
         const result = await resp.json();
-        return contentPostHandler(result.choices[0].message.content);
+        return interpretLLMContent(result.choices[0].message.content, message.mode);
     } catch (error) {
         console.error('API调用失败:', error);
         throw error;

@@ -1,11 +1,25 @@
 <template>
   <teleport to="body">
     <div ref="selection-ref" class="fr-selection-translator-wrapper">
-      <!-- 小红点指示器 -->
-      <div v-if="showIndicator" 
-          class="fr-selection-indicator" 
-          @mouseenter="handleMouseEnter"
-          @mouseleave="handleMouseLeave">
+      <Transition name="fr-inline-translate">
+        <button
+          v-if="showIndicator && config.selectionTranslatorMode === 'inline'"
+          class="fr-inline-translate-button"
+          :class="{ 'fr-dark-theme': isDarkTheme }"
+          :disabled="isInlineTranslating"
+          title="翻译选中文本"
+          @mousedown.stop.prevent
+          @mouseup.stop.prevent
+          @click.stop.prevent="handleInlineTranslate">
+          译
+        </button>
+      </Transition>
+
+      <div
+        v-if="showIndicator && config.selectionTranslatorMode !== 'inline'"
+        class="fr-selection-indicator"
+        @mouseenter="handleMouseEnter"
+        @mouseleave="handleMouseLeave">
       </div>
     
       <!-- 翻译结果弹窗 -->
@@ -96,7 +110,25 @@
 import { ref, onMounted, onBeforeUnmount, watch, useTemplateRef, watchEffect } from 'vue';
 import { translateText } from '@/entrypoints/utils/translateApi';
 import { config } from '@/entrypoints/utils/config';
-import { autoPlacement, autoUpdate, computePosition, flip, hide, inline, offset, shift } from '@floating-ui/dom';
+import {
+  beginInlineSelectionTranslation,
+  canUseInlineSelection,
+  cleanupInlineSelectionTranslations,
+  completeInlineSelectionTranslation,
+  failInlineSelectionTranslation,
+  type InlineSelectionSession,
+} from '@/entrypoints/utils/inlineSelectionTranslation';
+import {
+  autoPlacement,
+  autoUpdate,
+  computePosition,
+  flip,
+  hide,
+  inline,
+  offset,
+  shift,
+  type ReferenceElement,
+} from '@floating-ui/dom';
 
 // 状态变量
 const selectedText = ref('');
@@ -117,18 +149,46 @@ const debounceTimer = ref<number | null>(null); // 防抖定时器
 const currentPlayingText = ref(''); // 当前正在播放的文本
 const isFirefox = ref(false); // 是否为Firefox浏览器
 const isDarkTheme = ref(false); // 主题状态
+const isInlineTranslating = ref(false);
+let isUnmounted = false;
 
 const containerRef = useTemplateRef('selection-ref');
 
-// 自动更新小红点位置
+const getRangeContextElement = (range: Range): Element | undefined => {
+  const container = range.commonAncestorContainer;
+  return container.nodeType === Node.ELEMENT_NODE
+    ? container as Element
+    : container.parentElement ?? undefined;
+};
+
+const getLastVisibleRangeRect = (range: Range): DOMRect | null => {
+  const rects = Array.from(range.getClientRects()).filter(rect => rect.width > 0 || rect.height > 0);
+  return rects.length > 0 ? rects[rects.length - 1] : null;
+};
+
+const getSelectionPositionReference = (range: Range): ReferenceElement => {
+  if (config.selectionTranslatorMode !== 'inline') return range;
+
+  return {
+    getBoundingClientRect: () => getLastVisibleRangeRect(range) ?? range.getBoundingClientRect(),
+    getClientRects: () => {
+      const lastRect = getLastVisibleRangeRect(range);
+      return lastRect ? [lastRect] : range.getClientRects();
+    },
+    contextElement: getRangeContextElement(range),
+  };
+};
+
+// 自动更新划词入口位置
 watchEffect((onClean) => {
   const isPositioningActive = showIndicator.value || showTooltip.value;
   const range = selectRange.value;
   const container = containerRef.value;
   if (!isPositioningActive || !range || !container) return;
+  const positionReference = getSelectionPositionReference(range);
 
   const updatePosition = () => {
-    computePosition(range, container, {
+    computePosition(positionReference, container, {
       placement: 'right',
       strategy: 'fixed',
       middleware: [offset(2), flip({fallbackPlacements: ['left', 'right', 'top-start', 'top-end', 'bottom-start', 'bottom-end'], padding: {top: 100, bottom: 100} }), shift(), hide(), inline()],
@@ -142,7 +202,7 @@ watchEffect((onClean) => {
     })
   }
 
-  const cb = autoUpdate(range, container, updatePosition, {
+  const cb = autoUpdate(positionReference, container, updatePosition, {
     animationFrame: true,
   });
 
@@ -189,6 +249,11 @@ const handleTextSelection = () => {
     if (selectedTextContent === lastSelectedText.value) {
       // 重新显示指示器，但不重新获取翻译
       const range = selection.getRangeAt(0);
+      if (config.selectionTranslatorMode === 'inline' && !canUseInlineSelection(range)) {
+        hideIndicator();
+        return;
+      }
+
       selectRange.value = range;
       showIndicator.value = true;
       return;
@@ -209,6 +274,10 @@ const handleTextSelection = () => {
     
     // 获取选中文本位置信息
     const range = selection.getRangeAt(0);
+    if (config.selectionTranslatorMode === 'inline' && !canUseInlineSelection(range)) {
+      hideIndicator();
+      return;
+    }
     
     // 保存选中文本和位置
     selectedText.value = selectedTextContent;
@@ -299,6 +368,73 @@ const getTranslation = async () => {
   }
 };
 
+const getInlineSessionText = (session: InlineSelectionSession) => {
+  return session.sourceElements.map((el) => el.textContent ?? '').join('').trim();
+};
+
+const translateInlineSelectionSession = async (session: InlineSelectionSession) => {
+  if (isUnmounted || isInlineTranslating.value) return;
+
+  const inlineText = getInlineSessionText(session);
+  if (!inlineText) return;
+
+  isInlineTranslating.value = true;
+
+  try {
+    if (session.mode === 'word') {
+      const result = await translateText(inlineText, undefined, {
+        mode: 'word',
+        sentence: session.sentence,
+      });
+      if (isUnmounted) return;
+      if (typeof result === 'string') {
+        // 软降级：纯文本译文，无词典数据
+        completeInlineSelectionTranslation(session, result);
+      } else {
+        completeInlineSelectionTranslation(session, result.translation, result);
+      }
+    } else {
+      const result = await translateText(inlineText);
+      if (isUnmounted) return;
+      completeInlineSelectionTranslation(session, result);
+    }
+  } catch (err) {
+    if (!isUnmounted) {
+      failInlineSelectionTranslation(session, '翻译失败，点击重试', () => {
+        void translateInlineSelectionSession(session);
+      });
+      console.error('Inline translation error:', (err as Error).message);
+    }
+  } finally {
+    if (!isUnmounted) {
+      isInlineTranslating.value = false;
+    }
+  }
+};
+
+const handleInlineTranslate = async () => {
+  if (isUnmounted || !selectedText.value || !selectRange.value || isInlineTranslating.value) return;
+
+  const range = selectRange.value.cloneRange();
+  const inlineText = range.toString().trim();
+  if (!inlineText || !canUseInlineSelection(range)) {
+    hideIndicator();
+    return;
+  }
+
+  const session: InlineSelectionSession | null = beginInlineSelectionTranslation(range);
+  if (!session) {
+    hideIndicator();
+    return;
+  }
+
+  showIndicator.value = false;
+  showTooltip.value = false;
+  selectedText.value = inlineText;
+
+  await translateInlineSelectionSession(session);
+};
+
 // 复制翻译文本
 const copyTranslation = () => {
   if (!translationResult.value) return;
@@ -322,14 +458,10 @@ const copyTranslation = () => {
 const toggleAudio = (text: string, e?: Event) => {
   if (!text) return;
 
-  // 阻止事件冒泡，避免触发外部点击事件导致弹窗关闭
-  // 针对Firefox兼容性问题，优先使用传入的事件对象，否则使用全局event
+  // 只阻止组件内部音频按钮事件，避免误取消原始页面点击行为
   if (e) {
     e.stopPropagation();
     e.preventDefault();
-  } else if (event) {
-    event.stopPropagation();
-    event.preventDefault();
   }
   
   // 确保弹窗不会消失
@@ -405,13 +537,10 @@ const toggleAudio = (text: string, e?: Event) => {
 
 // 停止音频播放
 const stopAudio = (e?: Event) => {
-  // 阻止事件冒泡
+  // 只阻止组件内部音频按钮事件，避免误取消原始页面点击行为
   if (e) {
     e.stopPropagation();
     e.preventDefault();
-  } else if (event) {
-    event.stopPropagation();
-    event.preventDefault();
   }
   
   if (audioElement.value) {
@@ -577,6 +706,8 @@ onMounted(() => {
       lastSelectionChangeTime = now;
       // 延迟处理，确保选择操作完成
       setTimeout(() => {
+        if (isUnmounted) return;
+
         if (!isSelecting.value) {
           handleTextSelection();
         }
@@ -594,7 +725,7 @@ onMounted(() => {
   
   // 监听翻译显示状态的变化
   watch(showTooltip, async (newValue: boolean) => {
-    if (newValue) {
+    if (newValue && config.selectionTranslatorMode !== 'inline') {
       // 当显示弹窗时，加载翻译结果
       await getTranslation();
     } else if (isPlaying.value) {
@@ -607,7 +738,7 @@ onMounted(() => {
   clickHandler = (e: Event) => {
     // 检查点击事件是否发生在指示器或弹窗之外
     const target = e.target as HTMLElement;
-    const isOutsideIndicator = !target.closest('.fr-selection-indicator');
+    const isOutsideIndicator = !target.closest('.fr-selection-indicator') && !target.closest('.fr-inline-translate-button');
     const isOutsideTooltip = !target.closest('.fr-translation-tooltip');
     
     // 检查点击事件是否发生在音频按钮上
@@ -637,6 +768,8 @@ let systemThemeHandler: () => void;
 
 // 清理事件监听 (修复清理逻辑)
 onBeforeUnmount(() => {
+  isUnmounted = true;
+
   // 正确移除事件监听器
   if (mouseDownHandler) {
     document.removeEventListener('mousedown', mouseDownHandler);
@@ -663,6 +796,8 @@ onBeforeUnmount(() => {
     clearTimeout(debounceTimer.value);
     debounceTimer.value = null;
   }
+
+  cleanupInlineSelectionTranslations();
   
   // 停止所有音频播放
   if (audioElement.value) {
@@ -698,7 +833,81 @@ onBeforeUnmount(() => {
   animation: pulse 1.5s infinite;
 }
 
+.fr-inline-translate-button {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  width: 21px;
+  height: 21px;
+  padding: 0;
+  border: 1px solid rgba(74, 128, 205, 0.34);
+  border-radius: 50%;
+  background: #f7fbff;
+  color: #4a7dcc;
+  font-size: 11px;
+  font-weight: 680;
+  line-height: 1;
+  cursor: pointer;
+  z-index: 9999;
+  box-shadow: 0 2px 6px rgba(30, 96, 180, 0.08);
+  transition:
+    color 140ms ease,
+    background-color 140ms ease,
+    border-color 140ms ease,
+    box-shadow 140ms ease,
+    transform 140ms ease;
+}
+
+.fr-inline-translate-button:hover {
+  border-color: rgba(74, 128, 205, 0.58);
+  background: #eaf3ff;
+  color: #245ebe;
+  box-shadow: 0 3px 8px rgba(30, 96, 180, 0.1);
+  transform: translateY(-1px);
+}
+
+.fr-inline-translate-button.fr-dark-theme {
+  border-color: rgba(140, 187, 255, 0.35);
+  background: #23334d;
+  color: #9fc5ff;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.22);
+}
+
+.fr-inline-translate-button.fr-dark-theme:hover {
+  border-color: rgba(160, 205, 255, 0.52);
+  background: #2d4263;
+  color: #c3dcff;
+}
+
+.fr-inline-translate-button:disabled {
+  cursor: default;
+  opacity: 0.48;
+  transform: none;
+}
+
+.fr-inline-translate-enter-active {
+  transition:
+    opacity 150ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    transform 150ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.fr-inline-translate-leave-active {
+  transition:
+    opacity 110ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    transform 110ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.fr-inline-translate-enter-from,
+.fr-inline-translate-leave-to {
+  opacity: 0;
+  transform: translateY(2px) scale(0.92);
+}
+
 [data-placement="left"] .fr-selection-indicator {
+  bottom: 0;
+  right: 4px;
+}
+[data-placement="left"] .fr-inline-translate-button {
   bottom: 0;
   right: 4px;
 }
@@ -706,7 +915,15 @@ onBeforeUnmount(() => {
   bottom: 0;
   left: 4px;
 }
+[data-placement="right"] .fr-inline-translate-button {
+  bottom: 0;
+  left: 4px;
+}
 [data-placement="top-start"] .fr-selection-indicator {
+  left: 0;
+  bottom: 4px;
+}
+[data-placement="top-start"] .fr-inline-translate-button {
   left: 0;
   bottom: 4px;
 }
@@ -714,11 +931,23 @@ onBeforeUnmount(() => {
   right: 0;
   bottom: 4px;
 }
+[data-placement="top-end"] .fr-inline-translate-button {
+  right: 0;
+  bottom: 4px;
+}
 [data-placement="bottom-start"] .fr-selection-indicator {
   left: 0;
   top: 4px;
 }
+[data-placement="bottom-start"] .fr-inline-translate-button {
+  left: 0;
+  top: 4px;
+}
 [data-placement="bottom-end"] .fr-selection-indicator {
+  right: 0;
+  top: 4px;
+}
+[data-placement="bottom-end"] .fr-inline-translate-button {
   right: 0;
   top: 4px;
 }

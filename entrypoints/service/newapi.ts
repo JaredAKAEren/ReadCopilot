@@ -1,7 +1,7 @@
 import { method, urls } from "../utils/constant";
 import {commonMsgTemplate, deepseekMsgTemplate} from "../utils/template";
 import { config } from "@/entrypoints/utils/config";
-import { contentPostHandler } from "@/entrypoints/utils/check";
+import { interpretLLMContent } from "@/entrypoints/utils/wordPrompt";
 
 async function newapi(message: any) {
     try {
@@ -30,7 +30,7 @@ async function newapi(message: any) {
         const resp = await fetch(url, {
             method: method.POST,
             headers,
-            body: commonMsgTemplate(message.origin)
+            body: commonMsgTemplate(message)
         });
 
         if (!resp.ok) {
@@ -40,7 +40,7 @@ async function newapi(message: any) {
         const result = await resp.json();
 
         if (result.choices && result.choices.length > 0) {
-            return contentPostHandler(result.choices[0].message.content);
+            return interpretLLMContent(result.choices[0].message.content, message.mode);
         }
 
         throw new Error('翻译失败: 上游未返回内容');

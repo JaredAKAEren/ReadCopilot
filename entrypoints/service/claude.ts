@@ -2,6 +2,7 @@ import {services} from "../utils/option";
 import {method, urls} from "../utils/constant";
 import {claudeMsgTemplate} from "../utils/template";
 import {config} from "@/entrypoints/utils/config";
+import { interpretLLMContent } from "@/entrypoints/utils/wordPrompt";
 
 async function claude(message: any) {
     // 构建请求头
@@ -17,7 +18,7 @@ async function claude(message: any) {
         const resp = await fetch(url, {
             method: method.POST,
             headers,
-            body: claudeMsgTemplate(message.origin)
+            body: claudeMsgTemplate(message)
         });
 
         if (!resp.ok) {
@@ -25,7 +26,7 @@ async function claude(message: any) {
         }
 
         const result = await resp.json();
-        return result.content[0].text;
+        return interpretLLMContent(result.content[0].text, message.mode);
     } catch (error) {
         console.error('Claude API 调用失败:', error);
         throw error;

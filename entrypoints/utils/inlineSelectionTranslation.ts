@@ -1,0 +1,589 @@
+import { createApp, type App } from 'vue';
+import WordExplainPopover from '@/components/WordExplainPopover.vue';
+import { looksLikeWord, extractSentence } from './wordHeuristic';
+import type { WordPayload } from './wordPrompt';
+import { config } from './config';
+
+const BLOCK_TAGS = new Set([
+  'ADDRESS', 'ARTICLE', 'ASIDE', 'BLOCKQUOTE', 'DD', 'DIV', 'DL', 'DT',
+  'FIELDSET', 'FIGCAPTION', 'FIGURE', 'FOOTER', 'FORM', 'H1', 'H2', 'H3',
+  'H4', 'H5', 'H6', 'HEADER', 'HR', 'LI', 'MAIN', 'NAV', 'OL', 'P',
+  'PRE', 'SECTION', 'TABLE', 'TD', 'TH', 'TR', 'UL',
+]);
+
+const SOURCE_ATTR = 'data-fr-inline-selection-source';
+const STATUS_ATTR = 'data-fr-inline-selection-status';
+const RESULT_ATTR = 'data-fr-inline-selection-result';
+const TIER_ATTR = 'data-fr-inline-selection-tier';
+
+const HOVER_SHOW_DELAY = 200;
+const HOVER_HIDE_DELAY = 150;
+
+interface ActivePopover {
+  app: App;
+  container: HTMLElement;
+  sourceElements: HTMLElement[];
+  iconEl: HTMLElement;
+}
+
+let activePopover: ActivePopover | null = null;
+let showTimer: number | null = null;
+let hideTimer: number | null = null;
+
+let sourceCounter = 0;
+
+export interface InlineSelectionSession {
+  sourceId: string;
+  tier: 'word' | 'outer';
+  mode: 'word' | 'sentence';
+  sentence?: string;
+  sourceElements: HTMLElement[];
+  resultAnchor: HTMLElement;
+  payload?: WordPayload;
+}
+
+interface TextFragment {
+  node: Text;
+  start: number;
+  end: number;
+}
+
+type InlineSelectionRetryHandler = () => void | Promise<void>;
+
+// ─── Overlap / anchor utilities ───────────────────────────────────────────────
+
+function isFullyInsideRange(el: HTMLElement, range: Range): boolean {
+  const elRange = document.createRange();
+  elRange.selectNodeContents(el);
+  const startsAfter = range.compareBoundaryPoints(Range.START_TO_START, elRange) <= 0;
+  const endsBefore = range.compareBoundaryPoints(Range.END_TO_END, elRange) >= 0;
+  elRange.detach();
+  return startsAfter && endsBefore;
+}
+
+function partiallyOverlapsRange(el: HTMLElement, range: Range): boolean {
+  const elRange = document.createRange();
+  elRange.selectNodeContents(el);
+  const startsBefore = range.compareBoundaryPoints(Range.START_TO_START, elRange) < 0;
+  const endsAfter = range.compareBoundaryPoints(Range.END_TO_END, elRange) > 0;
+  const intersects = range.intersectsNode(el);
+  elRange.detach();
+  return intersects && (startsBefore || endsAfter) && !isFullyInsideRange(el, range);
+}
+
+function isRangeFullyInsideElement(range: Range, el: HTMLElement): boolean {
+  const elRange = document.createRange();
+  elRange.selectNodeContents(el);
+  const startsAfter = range.compareBoundaryPoints(Range.START_TO_START, elRange) >= 0;
+  const endsBefore = range.compareBoundaryPoints(Range.END_TO_END, elRange) <= 0;
+  elRange.detach();
+  return startsAfter && endsBefore;
+}
+
+// 在显式候选集合中按文档序取最末（DOCUMENT_POSITION_FOLLOWING）。
+// 不查 DOM：避免把嵌套在新 outer 内的 word source / 已有 result span 内的旧 wrapper
+// 误选为 anchor。调用方需保证 candidates 之间互不嵌套（sourceElements + 提前抓取的
+// preservedWordSources 满足这点，因为后者在 markRange 走 fragment 路径时是 outer
+// 兄弟节点，不在任何 outer 内部）。
+function pickLastByDocumentOrder(candidates: HTMLElement[]): HTMLElement | null {
+  if (candidates.length === 0) return null;
+  let last = candidates[0];
+  for (let i = 1; i < candidates.length; i++) {
+    if (last.compareDocumentPosition(candidates[i]) & Node.DOCUMENT_POSITION_FOLLOWING) {
+      last = candidates[i];
+    }
+  }
+  return last;
+}
+
+// ─── Reuse decision ───────────────────────────────────────────────────────────
+
+type ReuseDecision =
+  | { kind: 'fresh' }                           // 新建 session
+  | { kind: 'reuse'; sourceId: string }         // 完全等同：重译并替换
+  | { kind: 'cover'; idsToRemove: string[] }    // 覆盖：移除指定 outer source 后新建
+  | { kind: 'reject' };                         // 拒绝
+
+function getSourceReuseDecision(range: Range, block: HTMLElement, newTier: 'word' | 'outer'): ReuseDecision {
+  const allSources = Array.from(block.querySelectorAll<HTMLElement>(`[${SOURCE_ATTR}]`));
+
+  // 1. 越界检查：任何 source 与 range 部分重叠且越界 → 拒绝
+  for (const src of allSources) {
+    if (partiallyOverlapsRange(src, range)) return { kind: 'reject' };
+  }
+
+  // 2. 完全等同：range 边界正好等于某个 source 边界 → 重译
+  const sourceIdGroups = new Map<string, HTMLElement[]>();
+  for (const src of allSources) {
+    const id = src.getAttribute(SOURCE_ATTR) ?? '';
+    if (!sourceIdGroups.has(id)) sourceIdGroups.set(id, []);
+    sourceIdGroups.get(id)!.push(src);
+  }
+  for (const [id, group] of sourceIdGroups) {
+    const allInside = group.every((el) => isFullyInsideRange(el, range));
+    if (!allInside) continue;
+    const rangeText = range.toString().trim();
+    const groupText = group.map((el) => el.textContent ?? '').join('').trim();
+    if (rangeText === groupText) return { kind: 'reuse', sourceId: id };
+  }
+
+  // 2.5. 防御：range 完全落在某个已有 source 内部（且不等于它，因为相等已在 step 2 处理）→ 拒绝
+  for (const src of allSources) {
+    if (isRangeFullyInsideElement(range, src)) return { kind: 'reject' };
+  }
+
+  // 3. 覆盖/绕开：完全落在 range 内的 source
+  const containedSources = allSources.filter((el) => isFullyInsideRange(el, range));
+  if (newTier === 'word') {
+    if (containedSources.length > 0) return { kind: 'reject' };
+    return { kind: 'fresh' };
+  }
+  // newTier === 'outer'：移除其中 tier === 'outer' 的，保留 word
+  const idsToRemove = Array.from(new Set(
+    containedSources
+      .filter((el) => el.getAttribute(TIER_ATTR) === 'outer')
+      .map((el) => el.getAttribute(SOURCE_ATTR) ?? '')
+      .filter(Boolean)
+  ));
+  return { kind: 'cover', idsToRemove };
+}
+
+// ─── Public API ───────────────────────────────────────────────────────────────
+
+export function canUseInlineSelection(range: Range | null): boolean {
+  if (!range || range.collapsed || !range.toString().trim()) return false;
+  const block = getSharedBlockContainer(range);
+  if (!block) return false;
+  if (hasSelectedDescendantBlock(range, block)) return false;
+  const newTier: 'word' | 'outer' = looksLikeWord(range.toString(), config.to) ? 'word' : 'outer';
+  const decision = getSourceReuseDecision(range, block, newTier);
+  return decision.kind !== 'reject';
+}
+
+export function beginInlineSelectionTranslation(range: Range): InlineSelectionSession | null {
+  if (range.collapsed || !range.toString().trim()) return null;
+
+  const workingRange = range.cloneRange();
+  const block = getSharedBlockContainer(workingRange);
+  if (!block) return null;
+  if (hasSelectedDescendantBlock(workingRange, block)) return null;
+
+  const text = workingRange.toString();
+  const tier: 'word' | 'outer' = looksLikeWord(text, config.to) ? 'word' : 'outer';
+  const mode: 'word' | 'sentence' = tier === 'word' ? 'word' : 'sentence';
+  const sentence = mode === 'word' ? extractSentence(workingRange, block) : undefined;
+
+  const decision = getSourceReuseDecision(workingRange, block, tier);
+  if (decision.kind === 'reject') return null;
+
+  let sourceId: string;
+  let sourceElements: HTMLElement[];
+  let preservedWordSources: HTMLElement[] = [];
+
+  if (decision.kind === 'reuse') {
+    sourceId = decision.sourceId;
+    sourceElements = getSourceElements(sourceId);
+  } else {
+    // 在 markRange 前抓取要保留的 word source（cover 场景下它们是新 outer 的兄弟）。
+    if (decision.kind === 'cover') {
+      preservedWordSources = Array.from(block.querySelectorAll<HTMLElement>(`[${SOURCE_ATTR}]`))
+        .filter((el) =>
+          el.getAttribute(TIER_ATTR) === 'word' &&
+          isFullyInsideRange(el, workingRange),
+        );
+      for (const id of decision.idsToRemove) removeSource(id);
+    }
+    sourceId = `fr-inline-${Date.now()}-${sourceCounter++}`;
+    // 有 word source 残留时禁用 surroundContents：否则它会把 word source +
+    // 对应 result span 整段嵌进新 outer 里，anchor 与 fragment 计算都会错位。
+    const forceFragments = preservedWordSources.length > 0;
+    sourceElements = markRange(workingRange, block, sourceId, tier, forceFragments);
+  }
+
+  if (!sourceElements.length) return null;
+
+  removeStatus(sourceId);
+  removeResult(sourceId);
+
+  // anchor：在 sourceElements + preservedWordSources 这个互不嵌套的集合里取文档序最末。
+  const anchor = pickLastByDocumentOrder([...sourceElements, ...preservedWordSources])
+    ?? sourceElements[sourceElements.length - 1];
+
+  insertLoadingStatus(sourceId, anchor);
+
+  return { sourceId, tier, mode, sentence, sourceElements, resultAnchor: anchor };
+}
+
+function insertLoadingStatus(sourceId: string, anchor: HTMLElement): void {
+  removeStatus(sourceId);
+
+  const loading = document.createElement('span');
+  loading.className = 'fr-inline-selection-loading';
+  loading.setAttribute(STATUS_ATTR, sourceId);
+  loading.setAttribute('aria-label', '翻译中');
+
+  const spinner = document.createElement('span');
+  spinner.className = 'fr-inline-selection-spinner';
+  loading.appendChild(spinner);
+  anchor.insertAdjacentElement('afterend', loading);
+}
+
+export function completeInlineSelectionTranslation(
+  session: InlineSelectionSession,
+  translatedText: string,
+  payload?: WordPayload,
+): void {
+  removeStatus(session.sourceId);
+  removeResult(session.sourceId);
+
+  const result = document.createElement('span');
+  result.className = 'fr-inline-selection-result';
+  result.setAttribute(RESULT_ATTR, session.sourceId);
+
+  const sourceText = session.sourceElements.map((el) => el.textContent ?? '').join('').trim();
+  const showText = !(payload && payload.translation === sourceText);
+  if (showText) {
+    result.textContent = translatedText;
+  } else {
+    result.classList.add('is-empty');
+  }
+
+  // word 模式且有富 payload（至少一个词典字段）时，append icon SVG（hover 浮 popover）。
+  // 软降级时 payload 只剩 translation，无词典数据，此时不渲染 icon。
+  const hasRichPayload = !!(payload && (payload.ipa || payload.contextualMeaning || (payload.definitions?.length ?? 0) > 0));
+  if (session.mode === 'word' && payload && hasRichPayload) {
+    session.payload = payload;
+    const icon = createIconElement();
+    result.appendChild(icon);
+    attachIconHover(icon, session, payload);
+  }
+
+  session.resultAnchor.insertAdjacentElement('afterend', result);
+}
+
+export function failInlineSelectionTranslation(
+  session: InlineSelectionSession,
+  message = '翻译失败',
+  onRetry?: InlineSelectionRetryHandler,
+): void {
+  removeStatus(session.sourceId);
+  removeResult(session.sourceId);
+
+  const error = document.createElement('span');
+  error.className = 'fr-inline-selection-error';
+  error.setAttribute(RESULT_ATTR, session.sourceId);
+  error.textContent = message;
+
+  if (onRetry) {
+    error.classList.add('is-retryable');
+    error.setAttribute('role', 'button');
+    error.tabIndex = 0;
+    error.title = '重新翻译';
+
+    const retry = () => {
+      removeResult(session.sourceId);
+      insertLoadingStatus(session.sourceId, session.resultAnchor);
+      void onRetry();
+    };
+
+    error.addEventListener('click', retry);
+    error.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      retry();
+    });
+  }
+
+  session.resultAnchor.insertAdjacentElement('afterend', error);
+}
+
+export function cleanupInlineSelectionTranslations(): void {
+  unmountWordPopover();
+  document.querySelectorAll(`[${STATUS_ATTR}], [${RESULT_ATTR}]`).forEach((node) => node.remove());
+  document.querySelectorAll<HTMLElement>(`[${SOURCE_ATTR}]`).forEach((node) => {
+    unwrapSourceElement(node);
+  });
+}
+
+// ─── Icon element ─────────────────────────────────────────────────────────────
+
+function createIconElement(): HTMLElement {
+  const span = document.createElement('span');
+  span.className = 'fr-inline-selection-icon';
+  // 11×11 书形 SVG，stroke 跟随 currentColor
+  span.innerHTML = `<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>`;
+  return span;
+}
+
+// ─── Popover mount / unmount ──────────────────────────────────────────────────
+
+function mountWordPopover(icon: HTMLElement, session: InlineSelectionSession, payload: WordPayload): void {
+  unmountWordPopover();
+
+  const container = document.createElement('div');
+  container.className = 'fr-word-popover-host';
+  document.body.appendChild(container);
+
+  const word = session.sourceElements.map((el) => el.textContent ?? '').join('');
+
+  const app = createApp(WordExplainPopover, {
+    word,
+    payload,
+    referenceEl: icon,
+    onHoverEnter: () => {
+      if (hideTimer !== null) {
+        clearTimeout(hideTimer);
+        hideTimer = null;
+      }
+    },
+    onHoverLeave: () => {
+      scheduleHidePopover();
+    },
+  } as any);
+  app.mount(container);
+
+  for (const el of session.sourceElements) el.classList.add('fr-source-active');
+
+  activePopover = { app, container, sourceElements: session.sourceElements, iconEl: icon };
+}
+
+function unmountWordPopover(): void {
+  if (showTimer !== null) {
+    clearTimeout(showTimer);
+    showTimer = null;
+  }
+  if (hideTimer !== null) {
+    clearTimeout(hideTimer);
+    hideTimer = null;
+  }
+  if (!activePopover) return;
+  for (const el of activePopover.sourceElements) el.classList.remove('fr-source-active');
+  activePopover.app.unmount();
+  activePopover.container.remove();
+  activePopover = null;
+}
+
+function scheduleHidePopover(): void {
+  if (hideTimer !== null) clearTimeout(hideTimer);
+  hideTimer = window.setTimeout(() => {
+    unmountWordPopover();
+  }, HOVER_HIDE_DELAY);
+}
+
+// ─── Icon hover wiring ────────────────────────────────────────────────────────
+
+function attachIconHover(icon: HTMLElement, session: InlineSelectionSession, payload: WordPayload): void {
+  icon.addEventListener('mouseenter', () => {
+    if (hideTimer !== null) {
+      clearTimeout(hideTimer);
+      hideTimer = null;
+    }
+    if (activePopover && activePopover.iconEl === icon) return; // 已经显示这个 icon 的 popover
+
+    if (showTimer !== null) clearTimeout(showTimer);
+    showTimer = window.setTimeout(() => {
+      mountWordPopover(icon, session, payload);
+      showTimer = null;
+    }, HOVER_SHOW_DELAY);
+  });
+
+  icon.addEventListener('mouseleave', () => {
+    if (showTimer !== null) {
+      clearTimeout(showTimer);
+      showTimer = null;
+    }
+    scheduleHidePopover();
+  });
+}
+
+// ─── Internal helpers ─────────────────────────────────────────────────────────
+
+function removeSource(sourceId: string): void {
+  const sources = getSourceElements(sourceId);
+  for (const src of sources) {
+    unwrapSourceElement(src);
+  }
+  removeStatus(sourceId);
+  removeResult(sourceId);
+}
+
+function unwrapSourceElement(src: HTMLElement): void {
+  const parent = src.parentNode;
+  if (!parent) return;
+  while (src.firstChild) parent.insertBefore(src.firstChild, src);
+  parent.removeChild(src);
+}
+
+function markRange(
+  range: Range,
+  block: HTMLElement,
+  sourceId: string,
+  tier: 'word' | 'outer',
+  forceFragments = false,
+): HTMLElement[] {
+  if (!forceFragments) {
+    const wrapper = createSourceWrapper(sourceId, tier);
+    try {
+      range.surroundContents(wrapper);
+      return [wrapper];
+    } catch {
+      // 落到 fragment 路径
+    }
+  }
+  const fragments = collectTextFragments(range, block);
+  return fragments
+    .map((fragment) => wrapTextFragment(fragment, sourceId, tier))
+    .filter((element): element is HTMLElement => element !== null);
+}
+
+function createSourceWrapper(sourceId: string, tier: 'word' | 'outer'): HTMLElement {
+  const wrapper = document.createElement('span');
+  wrapper.className = 'fr-inline-selection-source';
+  wrapper.setAttribute(SOURCE_ATTR, sourceId);
+  wrapper.setAttribute(TIER_ATTR, tier);
+  return wrapper;
+}
+
+function wrapTextFragment(fragment: TextFragment, sourceId: string, tier: 'word' | 'outer'): HTMLElement | null {
+  if (fragment.start >= fragment.end) return null;
+
+  let selectedNode = fragment.node;
+  if (fragment.end < selectedNode.length) {
+    selectedNode.splitText(fragment.end);
+  }
+  if (fragment.start > 0) {
+    selectedNode = selectedNode.splitText(fragment.start);
+  }
+
+  const wrapper = createSourceWrapper(sourceId, tier);
+  selectedNode.parentNode?.insertBefore(wrapper, selectedNode);
+  wrapper.appendChild(selectedNode);
+  return wrapper;
+}
+
+function collectTextFragments(range: Range, root: HTMLElement): TextFragment[] {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      if (!node.textContent?.trim()) return NodeFilter.FILTER_REJECT;
+      // 跳过已存在的 source / 翻译结果 / 状态节点内部的文本，
+      // 否则覆盖型 outer 划句时会把已译单词的 result 文本（如"骨干网络"）
+      // 当成普通原文重新包成 source，污染 DOM 与 anchor 计算。
+      const parentEl = node.parentElement;
+      if (parentEl?.closest(`[${SOURCE_ATTR}], [${RESULT_ATTR}], [${STATUS_ATTR}]`)) {
+        return NodeFilter.FILTER_REJECT;
+      }
+      return range.intersectsNode(node) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+    },
+  });
+
+  const fragments: TextFragment[] = [];
+  let current = walker.nextNode() as Text | null;
+
+  while (current) {
+    const start = current === range.startContainer ? range.startOffset : 0;
+    const end = current === range.endContainer ? range.endOffset : current.length;
+
+    if (start < end) {
+      fragments.push({ node: current, start, end });
+    }
+
+    current = walker.nextNode() as Text | null;
+  }
+
+  return fragments;
+}
+
+function getSourceElements(sourceId: string): HTMLElement[] {
+  return Array.from(document.querySelectorAll<HTMLElement>(`[${SOURCE_ATTR}]`))
+    .filter((node) => node.getAttribute(SOURCE_ATTR) === sourceId);
+}
+
+function removeStatus(sourceId: string): void {
+  document.querySelectorAll(`[${STATUS_ATTR}]`).forEach((node) => {
+    if (node instanceof Element && node.getAttribute(STATUS_ATTR) === sourceId) {
+      node.remove();
+    }
+  });
+}
+
+function removeResult(sourceId: string): void {
+  document.querySelectorAll(`[${RESULT_ATTR}]`).forEach((node) => {
+    if (node instanceof Element && node.getAttribute(RESULT_ATTR) === sourceId) {
+      node.remove();
+    }
+  });
+}
+
+function getSharedBlockContainer(range: Range): HTMLElement | null {
+  const startBlock = getNearestBlockContainer(range.startContainer);
+  const endBlock = getNearestBlockContainer(range.endContainer);
+  return startBlock && startBlock === endBlock ? startBlock : null;
+}
+
+function hasSelectedDescendantBlock(range: Range, root: HTMLElement): boolean {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT, {
+    acceptNode(node) {
+      if (!(node instanceof Element) || !isBlockContainer(node)) {
+        return NodeFilter.FILTER_SKIP;
+      }
+
+      if (!range.intersectsNode(node)) {
+        return NodeFilter.FILTER_SKIP;
+      }
+
+      return hasMeaningfulSelectedText(range, node)
+        ? NodeFilter.FILTER_ACCEPT
+        : NodeFilter.FILTER_SKIP;
+    },
+  });
+
+  return walker.nextNode() !== null;
+}
+
+function hasMeaningfulSelectedText(range: Range, root: Element): boolean {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      return range.intersectsNode(node) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+    },
+  });
+
+  let current = walker.nextNode() as Text | null;
+  while (current) {
+    const start = current === range.startContainer ? range.startOffset : 0;
+    const end = current === range.endContainer ? range.endOffset : current.length;
+
+    if (start < end && current.data.slice(start, end).trim()) {
+      return true;
+    }
+
+    current = walker.nextNode() as Text | null;
+  }
+
+  return false;
+}
+
+function getNearestBlockContainer(node: Node): HTMLElement | null {
+  let element = node.nodeType === Node.TEXT_NODE
+    ? node.parentElement
+    : node instanceof Element
+      ? node
+      : null;
+
+  while (element && element !== document.body && element !== document.documentElement) {
+    if (isBlockContainer(element)) return element as HTMLElement;
+    element = element.parentElement;
+  }
+
+  return null;
+}
+
+function isBlockContainer(element: Element): boolean {
+  if (BLOCK_TAGS.has(element.tagName)) return true;
+
+  const display = window.getComputedStyle(element).display;
+  return display === 'block'
+    || display === 'list-item'
+    || display === 'table-cell'
+    || display === 'flex'
+    || display === 'grid';
+}

@@ -1,7 +1,7 @@
 import {method, urls} from "../utils/constant";
 import {commonMsgTemplate} from "../utils/template";
 import {config} from "@/entrypoints/utils/config";
-import {contentPostHandler} from "@/entrypoints/utils/check";
+import { interpretLLMContent } from "@/entrypoints/utils/wordPrompt";
 
 async function azureOpenai(message: any) {
     try {
@@ -29,7 +29,7 @@ async function azureOpenai(message: any) {
         const resp = await fetch(endpoint, {
             method: method.POST,
             headers,
-            body: commonMsgTemplate(message.origin)
+            body: commonMsgTemplate(message)
         });
 
         if (!resp.ok) {
@@ -63,7 +63,7 @@ async function azureOpenai(message: any) {
             throw new Error('Azure OpenAI 返回数据格式异常，请检查模型配置');
         }
         
-        return contentPostHandler(result.choices[0].message.content);
+        return interpretLLMContent(result.choices[0].message.content, message.mode);
     } catch (error) {
         console.error('Azure OpenAI API调用失败:', error);
         throw error;
