@@ -22,17 +22,24 @@ async function loadWordHeuristicModule() {
   return import(pathToFileURL(outputPath).href);
 }
 
-test('allows selected text only when it contains no Chinese Han characters', async () => {
+test('allows selected text only when it contains translatable non-Chinese text', async () => {
   const { isAllNonChineseSelectionText } = await loadWordHeuristicModule();
 
   assert.equal(isAllNonChineseSelectionText('constraint'), true);
   assert.equal(isAllNonChineseSelectionText('GraphQL resolver returns 404.'), true);
   assert.equal(isAllNonChineseSelectionText('OAuth 2.0 / Kubernetes'), true);
+  assert.equal(isAllNonChineseSelectionText('C++'), true);
+  assert.equal(isAllNonChineseSelectionText('404'), true);
   assert.equal(isAllNonChineseSelectionText('かなカナ'), true);
 
   assert.equal(isAllNonChineseSelectionText('中文'), false);
   assert.equal(isAllNonChineseSelectionText('hello 世界'), false);
   assert.equal(isAllNonChineseSelectionText('API 接口'), false);
   assert.equal(isAllNonChineseSelectionText('日本語の漢字'), false);
+  assert.equal(isAllNonChineseSelectionText('!@#$%^&*()'), false);
+  assert.equal(isAllNonChineseSelectionText('---'), false);
+  assert.equal(isAllNonChineseSelectionText('……'), false);
+  assert.equal(isAllNonChineseSelectionText('，。！？'), false);
+  assert.equal(isAllNonChineseSelectionText('🙂'), false);
   assert.equal(isAllNonChineseSelectionText('   '), false);
 });
