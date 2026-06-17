@@ -14,6 +14,7 @@
     "zip:firefox": "wxt zip -b firefox",
     "compile": "vue-tsc --noEmit",
     "test:inline-word-flow": "node --test scripts/inline-word-translation-flow.test.mjs",
+    "test:selection-text-filter": "node --test scripts/selection-text-filter.test.mjs",
     "test:deploy:chrome-local": "node --test scripts/deploy-chrome-local.test.mjs",
     "postinstall": "wxt prepare",
     "docs:dev": "vitepress dev docs",

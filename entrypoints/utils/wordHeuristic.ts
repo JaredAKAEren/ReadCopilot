@@ -1,4 +1,11 @@
 // 仅在目标语为中文时启用单词词典模式；其他目标语种走 sentence 模式。
+const CHINESE_HAN_RE = /\p{Script=Han}/u;
+
+export function isAllNonChineseSelectionText(raw: string): boolean {
+  const text = raw.trim();
+  return !!text && !CHINESE_HAN_RE.test(text);
+}
+
 export function looksLikeWord(raw: string, targetLang: string): boolean {
   if (targetLang !== 'zh-Hans') return false;
   const text = raw.trim();

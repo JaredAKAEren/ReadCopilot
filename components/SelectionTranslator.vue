@@ -119,6 +119,7 @@ import {
   type InlineSelectionSession,
 } from '@/entrypoints/utils/inlineSelectionTranslation';
 import { runInlineWordTranslationFlow } from '@/entrypoints/utils/inlineWordTranslationFlow';
+import { isAllNonChineseSelectionText } from '@/entrypoints/utils/wordHeuristic';
 import {
   autoPlacement,
   autoUpdate,
@@ -243,8 +244,9 @@ const handleTextSelection = () => {
     
     const selectedTextContent = selection.toString().trim();
     
-    // 如果选中的文本为空，则不处理
-    if (!selectedTextContent) {
+    // 仅非中文选区显示翻译入口；含中文字符时不触发划词翻译。
+    if (!isAllNonChineseSelectionText(selectedTextContent)) {
+      hideIndicator();
       return;
     }
     

@@ -1,6 +1,6 @@
 import { createApp, type App } from 'vue';
 import WordExplainPopover from '@/components/WordExplainPopover.vue';
-import { looksLikeWord, extractSentence } from './wordHeuristic';
+import { looksLikeWord, extractSentence, isAllNonChineseSelectionText } from './wordHeuristic';
 import type { WordPayload } from './wordPrompt';
 import { config } from './config';
 
@@ -151,7 +151,7 @@ function getSourceReuseDecision(range: Range, block: HTMLElement, newTier: 'word
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 export function canUseInlineSelection(range: Range | null): boolean {
-  if (!range || range.collapsed || !range.toString().trim()) return false;
+  if (!range || range.collapsed || !isAllNonChineseSelectionText(range.toString())) return false;
   const block = getSharedBlockContainer(range);
   if (!block) return false;
   if (hasSelectedDescendantBlock(range, block)) return false;
@@ -161,7 +161,7 @@ export function canUseInlineSelection(range: Range | null): boolean {
 }
 
 export function beginInlineSelectionTranslation(range: Range): InlineSelectionSession | null {
-  if (range.collapsed || !range.toString().trim()) return null;
+  if (range.collapsed || !isAllNonChineseSelectionText(range.toString())) return null;
 
   const workingRange = range.cloneRange();
   const block = getSharedBlockContainer(workingRange);
