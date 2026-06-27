@@ -10,7 +10,7 @@ import { cache } from './cache';
 import { detectlang } from './common';
 import { storage } from '@wxt-dev/storage';
 import { TranslateMessage } from './messageTypes';
-import { WordPayload, hasRichWordPayload, isValidWordPayload } from './wordPrompt';
+import { WordPayload, isValidWordPayload } from './wordPrompt';
 
 // 调试相关
 const isDev = process.env.NODE_ENV === 'development';
@@ -112,8 +112,8 @@ export async function translateText(
         ]) as string | WordPayload;
 
         if (mode === 'word') {
-          // word 模式：只缓存富词典结果；软降级纯译文不缓存，便于下次重新尝试结构化解析。
-          if (useCache && isValidWordPayload(result) && hasRichWordPayload(result)) {
+          // word 模式：缓存所有合法 payload，包括软降级纯译文，避免同一语境重复慢请求。
+          if (useCache && isValidWordPayload(result)) {
             cache.localSet(cacheKey, JSON.stringify(result));
           }
           return result;

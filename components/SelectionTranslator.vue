@@ -118,6 +118,8 @@ import {
   failInlineSelectionTranslation,
   type InlineSelectionSession,
 } from '@/entrypoints/utils/inlineSelectionTranslation';
+import { runInlineWordTranslationFlow } from '@/entrypoints/utils/inlineWordTranslationFlow';
+import { isAllNonChineseSelectionText } from '@/entrypoints/utils/wordHeuristic';
 import {
   autoPlacement,
   autoUpdate,
@@ -129,6 +131,8 @@ import {
   shift,
   type ReferenceElement,
 } from '@floating-ui/dom';
+
+const isDev = process.env.NODE_ENV === 'development';
 
 // 状态变量
 const selectedText = ref('');
@@ -240,8 +244,9 @@ const handleTextSelection = () => {
     
     const selectedTextContent = selection.toString().trim();
     
-    // 如果选中的文本为空，则不处理
-    if (!selectedTextContent) {
+    // 仅非中文选区显示翻译入口；含中文字符时不触发划词翻译。
+    if (!isAllNonChineseSelectionText(selectedTextContent)) {
+      hideIndicator();
       return;
     }
     
@@ -382,17 +387,28 @@ const translateInlineSelectionSession = async (session: InlineSelectionSession) 
 
   try {
     if (session.mode === 'word') {
-      const result = await translateText(inlineText, undefined, {
-        mode: 'word',
-        sentence: session.sentence,
+      await runInlineWordTranslationFlow({
+        fastRequest: () => translateText(inlineText),
+        richRequest: () => translateText(inlineText, undefined, {
+          mode: 'word',
+          sentence: session.sentence,
+        }),
+        onFastResult: (text) => {
+          if (!isUnmounted) {
+            completeInlineSelectionTranslation(session, text);
+          }
+        },
+        onRichResult: (text, payload) => {
+          if (!isUnmounted) {
+            completeInlineSelectionTranslation(session, text, payload);
+          }
+        },
+        onTiming: (stage, elapsedMs) => {
+          if (isDev) {
+            console.log(`[内联单词翻译] inline word ${stage}: ${elapsedMs}ms`);
+          }
+        },
       });
-      if (isUnmounted) return;
-      if (typeof result === 'string') {
-        // 软降级：纯文本译文，无词典数据
-        completeInlineSelectionTranslation(session, result);
-      } else {
-        completeInlineSelectionTranslation(session, result.translation, result);
-      }
     } else {
       const result = await translateText(inlineText);
       if (isUnmounted) return;
